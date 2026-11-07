@@ -135,39 +135,96 @@ struct AppStoreTests {
     }
 }
 
+/// Hands time to the test: every `sleep` waits until `advance()`.
+@MainActor
+final class ManualClock {
+    private(set) var requested: [Duration] = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    nonisolated var sleep: ToastCenter.Sleep { { [self] duration in await self.wait(duration) } }
+
+    private func wait(_ duration: Duration) async {
+        requested.append(duration)
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    /// Lets every pending sleep finish.
+    func advance() {
+        let pending = waiters
+        waiters = []
+        pending.forEach { $0.resume() }
+    }
+
+    /// Yields until `condition` holds (the toast's hide task runs on the main actor too).
+    func settle(until condition: () -> Bool) async {
+        for _ in 0..<100 where !condition() { await Task.yield() }
+    }
+}
+
 @MainActor
 struct ToastCenterTests {
-    @Test func newToastReplacesCurrent() {
-        let toasts = ToastCenter()
-        toasts.show("First")
-        toasts.show("Second")
-        #expect(toasts.current?.message == "Second")
-    }
+    @Test func showUndoRestoresThenAutoHidesAfterDuration() async throws {
+        let clock = ManualClock()
+        let toasts = ToastCenter(sleep: clock.sleep)
+        let now = AppStoreTests.now
+        let store = AppStore(data: .make(now: now), clock: { now })
+        let item = try #require(store.toBuy(in: .shared).first)
 
-    @Test func actionRunsAndHides() {
-        let toasts = ToastCenter()
-        var undone = false
-        toasts.showUndo("Task done") { undone = true }
+        // Check the item: toast with Undo is shown and waits 3.8 s.
+        let previous = try #require(store.setGrocery(item.id, done: true))
+        toasts.showUndo("\(item.name) bought") { store.restore(previous) }
+        #expect(toasts.current?.message == "\(item.name) bought")
         #expect(toasts.current?.action == "Undo")
+        await clock.settle { !clock.requested.isEmpty }
+        #expect(clock.requested == [.milliseconds(3800)])
+        #expect(toasts.current != nil, "still visible before time passes")
+
+        // Undo restores the item and hides the toast.
         toasts.performAction()
-        #expect(undone)
+        #expect(store.toBuy(in: .shared).contains { $0.id == item.id })
+        #expect(toasts.current == nil)
+
+        // A second toast hides by itself once 3.8 s have passed.
+        toasts.show("Task done")
+        await clock.settle { clock.requested.count == 2 }
+        #expect(toasts.current?.message == "Task done")
+        clock.advance()
+        await clock.settle { toasts.current == nil }
         #expect(toasts.current == nil)
     }
 
-    @Test func autoHides() async throws {
-        let toasts = ToastCenter(duration: .milliseconds(50))
-        toasts.show("Saved")
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(toasts.current == nil)
-    }
-
-    @Test func staleTimerDoesNotHideNewerToast() async throws {
-        let toasts = ToastCenter(duration: .milliseconds(150))
+    @Test func newToastReplacesCurrentAndOldTimerCantHideIt() async {
+        let clock = ManualClock()
+        let toasts = ToastCenter(sleep: clock.sleep)
         toasts.show("First")
-        try await Task.sleep(for: .milliseconds(100))
+        await clock.settle { clock.requested.count == 1 }
         toasts.show("Second")
-        try await Task.sleep(for: .milliseconds(80))
+        await clock.settle { clock.requested.count == 2 }
         #expect(toasts.current?.message == "Second")
+
+        // Both timers fire: the cancelled first one must not hide "Second" early… but the second one does.
+        clock.advance()
+        await clock.settle { toasts.current == nil }
+        #expect(toasts.current == nil)
+    }
+
+    @Test func staleTimerIgnoresNewerToast() async {
+        let clock = ManualClock()
+        let toasts = ToastCenter(sleep: clock.sleep)
+        toasts.show("First")
+        await clock.settle { clock.requested.count == 1 }
+        // Fire only the first timer, then show a new toast before it runs.
+        clock.advance()
+        toasts.show("Second")
+        for _ in 0..<20 { await Task.yield() }
+        #expect(toasts.current?.message == "Second")
+    }
+
+    @Test func actionlessToastHasNoUndo() {
+        let toasts = ToastCenter(sleep: { _ in })
+        toasts.show("Sam bought Tomatoes", person: .sam)
+        #expect(toasts.current?.action == nil)
+        #expect(toasts.current?.person == .sam)
     }
 }
 

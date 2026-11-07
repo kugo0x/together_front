@@ -1,3 +1,4 @@
+import OSLog
 import SwiftUI
 
 /// One toast at a time, auto-hidden after 3.8 s; a new toast replaces the current one.
@@ -13,23 +14,30 @@ final class ToastCenter {
         var onAction: (@MainActor () -> Void)?
     }
 
+    /// Waits for a duration; injectable so tests can drive time by hand.
+    typealias Sleep = @Sendable (Duration) async throws -> Void
+
     static let duration: Duration = .milliseconds(3800)
+    private static let log = Logger(subsystem: "app.together.Together", category: "toast")
 
     private(set) var current: Item?
     @ObservationIgnored private var hideTask: Task<Void, Never>?
     @ObservationIgnored private let duration: Duration
+    @ObservationIgnored private let sleep: Sleep
 
-    init(duration: Duration = ToastCenter.duration) {
+    init(duration: Duration = ToastCenter.duration, sleep: @escaping Sleep = { try await Task.sleep(for: $0) }) {
         self.duration = duration
+        self.sleep = sleep
     }
 
     func show(_ message: String, person: Person? = nil, action: String? = nil, onAction: (@MainActor () -> Void)? = nil) {
         let item = Item(message: message, person: person, action: action, onAction: onAction)
         current = item
+        Self.log.debug("show \(message, privacy: .public)")
         AccessibilityNotification.Announcement(action.map { "\(message). \($0) available" } ?? message).post()
         hideTask?.cancel()
-        hideTask = Task { [weak self, duration] in
-            try? await Task.sleep(for: duration)
+        hideTask = Task { [weak self, duration, sleep] in
+            try? await sleep(duration)
             guard !Task.isCancelled else { return }
             self?.dismiss(item.id)
         }
@@ -49,6 +57,7 @@ final class ToastCenter {
 
     func dismiss(_ id: Item.ID? = nil) {
         guard let current, id == nil || current.id == id else { return }
+        Self.log.debug("hide \(current.message, privacy: .public)")
         self.current = nil
         hideTask?.cancel()
         hideTask = nil

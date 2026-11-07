@@ -30,9 +30,11 @@ struct RootView: View {
         .tint(Accent.of(space).ink)
         .sheet(isPresented: $showSettings) { SettingsPlaceholder() }
         .task {
-            // `-demoToast YES` (launch argument) shows a toast on launch — for screenshots of the overlay.
-            if UserDefaults.standard.bool(forKey: "demoToast") {
-                toasts.show("Sam bought Tomatoes", person: .sam)
+            // `-demoToast partner|undo` (launch argument) shows a toast on launch — for screenshots of the overlay.
+            switch UserDefaults.standard.string(forKey: "demoToast") {
+            case "partner": toasts.show("Sam bought Tomatoes", person: .sam)
+            case "undo": toasts.showUndo("Tomatoes bought") {}
+            default: break
             }
         }
         .environment(\.space, space)
