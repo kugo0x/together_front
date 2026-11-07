@@ -4,8 +4,12 @@ import SwiftUI
 struct TogetherApp: App {
     var body: some Scene {
         WindowGroup {
-            // Phase 1: the design-system catalog. Phase 2 replaces this with the tab shell.
-            ComponentCatalogView()
+            // Launch with `-catalog YES` to browse the design-system components instead of the shell.
+            if UserDefaults.standard.bool(forKey: "catalog") {
+                ComponentCatalogView()
+            } else {
+                RootView()
+            }
         }
     }
 }
