@@ -9,8 +9,12 @@ struct RootView: View {
     @State private var toasts = ToastCenter()
     @State private var showSettings = false
 
-    init(store: AppStore = AppStore()) {
-        _store = State(initialValue: store)
+    init(store: AppStore? = nil) {
+        // `-noNotifications YES` (launch argument) keeps UI tests and screenshots free of the permission alert.
+        let notifier: ReminderNotifying = UserDefaults.standard.bool(forKey: "noNotifications")
+            ? NoReminderNotifications()
+            : UserNotificationReminders()
+        _store = State(initialValue: store ?? AppStore(notifier: notifier))
     }
 
     var body: some View {

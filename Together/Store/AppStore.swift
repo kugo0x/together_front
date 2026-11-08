@@ -28,9 +28,20 @@ final class AppStore {
     private(set) var suggestionsBySpace: [SpaceKind: [Suggestion]]
     private(set) var sampleReceipt: [ReceiptLine]
 
-    @ObservationIgnored private let clock: @Sendable () -> Date
+    /// Each person's do-not-disturb window (Settings later; the API keeps it per user).
+    var quietHours: [Person: QuietHours] = [.alex: .default, .sam: .default]
 
-    init(data: MockData = .make(), clock: @escaping @Sendable () -> Date = { .now }) {
+    @ObservationIgnored private let clock: @Sendable () -> Date
+    /// The zone due dates, repeats and reminders are computed in (the device's; Europe/Warsaw in tests).
+    @ObservationIgnored let calendar: Calendar
+    @ObservationIgnored private let notifier: ReminderNotifying
+
+    init(
+        data: MockData = .make(),
+        clock: @escaping @Sendable () -> Date = { .now },
+        calendar: Calendar = .current,
+        notifier: ReminderNotifying = NoReminderNotifications()
+    ) {
         lists = data.lists
         groceryItems = data.groceries
         tasks = data.tasks
@@ -39,6 +50,8 @@ final class AppStore {
         suggestionsBySpace = data.suggestions
         sampleReceipt = data.receipt
         self.clock = clock
+        self.calendar = calendar
+        self.notifier = notifier
         for space in SpaceKind.allCases { _ = defaultList(for: space) }
     }
 
@@ -186,29 +199,161 @@ final class AppStore {
 
     func recentTrips(in space: SpaceKind, limit: Int = 2) -> [Trip] { Array(trips(in: space).prefix(limit)) }
 
-    // MARK: Tasks and notes (phases 4–5 extend these)
+    // MARK: Tasks — /v1/spaces/{id}/tasks, …/complete, …/reopen, …/reminder
+
+    /// What the task sheet sends (POST, or a full PATCH). `reminderAt` is the time asked for; quiet hours are
+    /// applied here, like the server does.
+    struct TaskDraft: Equatable {
+        var title: String
+        var notes: String?
+        var dueDay: CalendarDay?
+        var repeatRule: RepeatRule?
+        var assignee: Person?
+        var reminderAt: Date?
+    }
+
+    /// Result of completing a task.
+    struct TaskCompletion {
+        let task: TaskItem
+        /// Repeating: the due date moved forward instead of the task closing.
+        let rolled: Bool
+        /// How many days the due date moved.
+        let days: Int
+    }
+
+    /// What `deleteTask` took away, for Undo.
+    struct RemovedTask {
+        let task: TaskItem
+        fileprivate let index: Int
+    }
 
     func tasks(in space: SpaceKind) -> [TaskItem] { tasks.filter { $0.space == space } }
-    func pendingTasks(in space: SpaceKind) -> [TaskItem] { tasks(in: space).filter { !$0.done } }
-    func doneTasks(in space: SpaceKind) -> [TaskItem] { tasks(in: space).filter(\.done) }
+
+    /// GET …/tasks?view=active — by due date, undated last.
+    func activeTasks(in space: SpaceKind) -> [TaskItem] {
+        let active = tasks(in: space).filter { !$0.done }
+        return active.enumerated().sorted { a, b in
+            switch (a.element.dueDay, b.element.dueDay) {
+            case let (x?, y?) where x != y: x < y
+            case (_?, nil): true
+            case (nil, _?): false
+            default: a.offset < b.offset
+            }
+        }.map(\.element)
+    }
+
+    /// Kept for the Home placeholder.
+    func pendingTasks(in space: SpaceKind) -> [TaskItem] { activeTasks(in: space) }
+
+    /// GET …/tasks?view=done — latest first.
+    func doneTasks(in space: SpaceKind) -> [TaskItem] {
+        tasks(in: space).filter(\.done).sorted { ($0.doneAt ?? .distantPast) > ($1.doneAt ?? .distantPast) }
+    }
+
+    func task(_ id: TaskItem.ID, in space: SpaceKind) -> TaskItem? {
+        tasks.first { $0.id == id && $0.space == space }
+    }
+
+    /// Who a task's reminder would go to: the assignee (Personal: always me). `nil` = Anyone → no reminder.
+    func reminderRecipient(assignee: Person?, in space: SpaceKind) -> Person? {
+        space == .personal ? me : assignee
+    }
+
+    /// POST /v1/spaces/{id}/tasks — only the title is required.
+    @discardableResult
+    func createTask(_ draft: TaskDraft, in space: SpaceKind) -> TaskItem? {
+        guard let title = Self.clean(draft.title, max: Limits.taskTitle) else { return nil }
+        var task = TaskItem(space: space, title: title, createdBy: me)
+        apply(draft, to: &task, title: title)
+        tasks.insert(task, at: 0)
+        syncNotification(task)
+        return task
+    }
+
+    /// PATCH /v1/spaces/{id}/tasks/{taskID} with every field (the sheet edits them all).
+    @discardableResult
+    func updateTask(_ id: TaskItem.ID, in space: SpaceKind, with draft: TaskDraft) -> TaskItem? {
+        guard let i = taskIndex(id, in: space), let title = Self.clean(draft.title, max: Limits.taskTitle) else { return nil }
+        apply(draft, to: &tasks[i], title: title)
+        syncNotification(tasks[i])
+        return tasks[i]
+    }
+
+    /// POST …/complete — one-off: done. Repeating: stays open, due date rolls to the next occurrence after
+    /// today and the reminder rolls with it. Completing a done task changes nothing (`nil`).
+    @discardableResult
+    func completeTask(_ id: TaskItem.ID, in space: SpaceKind) -> TaskCompletion? {
+        guard let i = taskIndex(id, in: space), !tasks[i].done else { return nil }
+        let now = now
+        tasks[i].lastDoneAt = now
+        tasks[i].lastDoneBy = me
+        var rolled = false, days = 0
+        if let rule = tasks[i].repeatRule, let due = tasks[i].dueDay {
+            let next = rule.nextOccurrence(after: due, anchorDay: tasks[i].anchorDay, today: today)
+            days = due.days(until: next)
+            tasks[i].previousDueDay = due
+            tasks[i].dueDay = next
+            tasks[i].reminder = moved(tasks[i].reminder, byDays: days)
+            rolled = true
+        } else {
+            tasks[i].done = true
+            tasks[i].doneBy = me
+            tasks[i].doneAt = now
+        }
+        syncNotification(tasks[i])
+        return TaskCompletion(task: tasks[i], rolled: rolled, days: days)
+    }
+
+    /// POST …/reopen — Undo of a completion: reopens a done task, or rolls a repeating one back.
+    @discardableResult
+    func reopenTask(_ id: TaskItem.ID, in space: SpaceKind) -> TaskItem? {
+        guard let i = taskIndex(id, in: space) else { return nil }
+        if tasks[i].done {
+            tasks[i].done = false
+            tasks[i].doneBy = nil
+            tasks[i].doneAt = nil
+        } else if tasks[i].repeatRule != nil, let previous = tasks[i].previousDueDay, let due = tasks[i].dueDay {
+            tasks[i].reminder = moved(tasks[i].reminder, byDays: due.days(until: previous))
+            tasks[i].dueDay = previous
+            tasks[i].previousDueDay = nil
+            tasks[i].lastDoneAt = nil
+            tasks[i].lastDoneBy = nil
+        } else {
+            return nil
+        }
+        syncNotification(tasks[i])
+        return tasks[i]
+    }
+
+    /// DELETE /v1/spaces/{id}/tasks/{taskID} — with its reminder.
+    @discardableResult
+    func deleteTask(_ id: TaskItem.ID, in space: SpaceKind) -> RemovedTask? {
+        guard let i = taskIndex(id, in: space) else { return nil }
+        let task = tasks.remove(at: i)
+        notifier.cancel(id: task.id.uuidString)
+        return RemovedTask(task: task, index: i)
+    }
+
+    func undoDeleteTask(_ removed: RemovedTask) {
+        guard !tasks.contains(where: { $0.id == removed.task.id }) else { return }
+        tasks.insert(removed.task, at: min(removed.index, tasks.count))
+        syncNotification(removed.task)
+    }
+
+    /// Plans a reminder for the sheet's preview and for saving: quiet hours of the recipient applied.
+    func planReminder(at requested: Date, for recipient: Person) -> TaskReminder {
+        TaskReminder.plan(at: requested, for: recipient, quiet: quietHours[recipient] ?? .default, calendar: calendar)
+    }
+
+    var today: CalendarDay { CalendarDay(now, calendar: calendar) }
+
+    /// Date wording in the store's clock and zone.
+    var dates: RelativeDate { RelativeDate(now: now, calendar: calendar) }
+
+    // MARK: Notes (phase 5 extends these)
 
     func notes(in space: SpaceKind) -> [Note] {
         notes.filter { $0.space == space }.sorted { $0.updatedAt > $1.updatedAt }
-    }
-
-    /// Completes or reopens a task. Returns the previous value for Undo.
-    @discardableResult
-    func setTask(_ id: TaskItem.ID, done: Bool) -> TaskItem? {
-        guard let i = tasks.firstIndex(where: { $0.id == id }) else { return nil }
-        let previous = tasks[i]
-        tasks[i].done = done
-        tasks[i].doneBy = done ? me : nil
-        return previous
-    }
-
-    func restore(_ task: TaskItem) {
-        guard let i = tasks.firstIndex(where: { $0.id == task.id }) else { return }
-        tasks[i] = task
     }
 
     // MARK: Private
@@ -216,6 +361,52 @@ final class AppStore {
     /// Field limits from the API (`name` 80, `qty` 20, `note` 140).
     enum Limits {
         static let name = 80, qty = 20, note = 140
+        static let taskTitle = 120, taskNotes = 2000
+    }
+
+    private func taskIndex(_ id: TaskItem.ID, in space: SpaceKind) -> Int? {
+        tasks.firstIndex { $0.id == id && $0.space == space }
+    }
+
+    /// Validates a draft into a task (API rules): a repeat needs a date; Personal tasks are the owner's;
+    /// a reminder needs a recipient (never Anyone) and is shifted out of their quiet hours.
+    private func apply(_ draft: TaskDraft, to task: inout TaskItem, title: String) {
+        task.title = title
+        task.notes = draft.notes.flatMap { Self.clean($0, max: Limits.taskNotes) }
+        let rule = draft.dueDay == nil ? nil : draft.repeatRule
+        if task.dueDay != draft.dueDay || task.repeatRule != rule {
+            task.dueDay = draft.dueDay
+            task.repeatRule = rule
+            task.previousDueDay = nil
+            task.anchorDay = rule == nil ? 0 : draft.dueDay!.day
+        }
+        task.assignee = task.space == .personal ? me : draft.assignee
+        if let recipient = reminderRecipient(assignee: task.assignee, in: task.space), let at = draft.reminderAt {
+            task.reminder = planReminder(at: at, for: recipient)
+        } else {
+            task.reminder = nil
+        }
+    }
+
+    private func moved(_ reminder: TaskReminder?, byDays days: Int) -> TaskReminder? {
+        guard let reminder, days != 0 else { return reminder }
+        return reminder.moved(byDays: days, quiet: quietHours[reminder.recipient] ?? .default, calendar: calendar)
+    }
+
+    /// Keeps the local notification in step with the task: only my own pending reminders, one per task id.
+    private func syncNotification(_ task: TaskItem) {
+        let id = task.id.uuidString
+        guard !task.done, let reminder = task.reminder, reminder.recipient == me, reminder.remindAt > now else {
+            notifier.cancel(id: id)
+            return
+        }
+        let label = task.dueDay.map { ReminderText.dueLabel($0, today: today) }
+        notifier.schedule(LocalReminder(
+            id: id,
+            title: ReminderText.title(setBy: task.createdBy, recipient: me),
+            body: [task.title, label].compactMap { $0 }.joined(separator: " · "),
+            fireAt: reminder.remindAt
+        ))
     }
 
     private func defaultListItems(_ space: SpaceKind) -> [GroceryItem] {

@@ -41,17 +41,30 @@ struct MockData: Sendable {
             .init(listID: personal.id, name: "Birthday card for Sam"),
         ]
 
+        func cday(_ offset: Int) -> CalendarDay { CalendarDay(day(offset), calendar: calendar) }
+        func task(
+            _ space: SpaceKind, _ title: String, due: Int? = nil, repeat rule: RepeatRule? = nil,
+            assignee: Person? = nil, remindAt: Date? = nil, done: Bool = false, doneBy: Person? = nil
+        ) -> TaskItem {
+            let dueDay = due.map(cday)
+            return TaskItem(
+                space: space, title: title, dueDay: dueDay, repeatRule: rule, anchorDay: dueDay?.day ?? 0,
+                assignee: space == .personal ? .alex : assignee,
+                reminder: remindAt.map { TaskReminder(remindAt: $0, recipient: assignee ?? .alex) },
+                createdBy: .alex, done: done, doneBy: doneBy, doneAt: done ? day(-1, 20) : nil
+            )
+        }
+
         let tasks: [TaskItem] = [
-            .init(space: .shared, title: "Pay the internet bill", due: day(0), repeatRule: .monthly,
-                  assignee: .alex, reminderAt: day(0, 19)),
-            .init(space: .shared, title: "Replace the water filter", due: day(7), repeatRule: .everyTwoMonths),
-            .init(space: .shared, title: "Clean the bathroom", due: day(1), repeatRule: .weekly, assignee: .sam),
-            .init(space: .shared, title: "Return the parcel", due: day(2), assignee: .sam, reminderAt: day(2, 9)),
-            .init(space: .shared, title: "Defrost the freezer"),
-            .init(space: .shared, title: "Take out the recycling", assignee: .sam, done: true, doneBy: .sam),
-            .init(space: .personal, title: "Book a dentist appointment", due: day(9)),
-            .init(space: .personal, title: "Renew gym membership", due: day(8)),
-            .init(space: .personal, title: "Call Mum", due: day(1), repeatRule: .weekly),
+            task(.shared, "Pay the internet bill", due: 0, repeat: .monthly, assignee: .alex, remindAt: day(0, 19)),
+            task(.shared, "Replace the water filter", due: 7, repeat: .everyTwoMonths),
+            task(.shared, "Clean the bathroom", due: 1, repeat: .weekly, assignee: .sam),
+            task(.shared, "Return the parcel", due: 2, assignee: .sam, remindAt: day(2, 9)),
+            task(.shared, "Defrost the freezer"),
+            task(.shared, "Take out the recycling", assignee: .sam, done: true, doneBy: .sam),
+            task(.personal, "Book a dentist appointment", due: 9),
+            task(.personal, "Renew gym membership", due: 8),
+            task(.personal, "Call Mum", due: 1, repeat: .weekly),
         ]
 
         let notes: [Note] = [

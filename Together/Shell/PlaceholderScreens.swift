@@ -9,9 +9,8 @@ struct HomeScreen: View {
     @Environment(\.space) private var space
 
     var body: some View {
-        let dates = RelativeDate(now: store.now)
+        let dates = store.dates
         let upcoming = store.pendingTasks(in: space)
-            .sorted { ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture) }
             .prefix(3)
         let toBuy = store.toBuy(in: space)
         let notes = store.notes(in: space).prefix(2)
@@ -46,7 +45,7 @@ struct HomeScreen: View {
 
     private var subtitle: String {
         let now = store.now
-        let date = RelativeDate(now: now).longDay(now)
+        let date = store.dates.longDay(now)
         let hour = Calendar.current.component(.hour, from: now)
         let greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
         return "\(date) · \(greeting), \(store.me.name)"
@@ -61,54 +60,12 @@ struct HomeScreen: View {
     }
 }
 
-struct TasksScreen: View {
-    @Environment(AppStore.self) private var store
-    @Environment(ToastCenter.self) private var toasts
-    @Environment(\.space) private var space
-
-    var body: some View {
-        let dates = RelativeDate(now: store.now)
-        let pending = store.pendingTasks(in: space)
-        let done = store.doneTasks(in: space)
-
-        ShellList(subtitle: "\(pending.count) to do · " + (space == .shared ? sharedWith : "Private")) {
-            if !pending.isEmpty {
-                ShellSection(title: "To do", count: pending.count) {
-                    ForEach(pending) { task in
-                        TaskRow(task: task, dates: dates, me: store.me) { toggle(task) }
-                    }
-                }
-            }
-            if !done.isEmpty {
-                ShellSection(title: "Done", count: done.count) {
-                    ForEach(done) { task in
-                        TaskRow(task: task, dates: dates, me: store.me) { toggle(task) }
-                    }
-                }
-            }
-            if pending.isEmpty && done.isEmpty {
-                EmptyState(title: "No tasks", message: nil, icon: .tasks)
-                    .listRowBackground(Color.clear)
-            }
-        }
-    }
-
-    private var sharedWith: String { store.partner.map { "Shared with \($0.name)" } ?? "Shared space" }
-
-    private func toggle(_ task: TaskItem) {
-        guard let previous = store.setTask(task.id, done: !task.done) else { return }
-        if !task.done {
-            toasts.showUndo("Task done") { store.restore(previous) }
-        }
-    }
-}
-
 struct NotesScreen: View {
     @Environment(AppStore.self) private var store
     @Environment(\.space) private var space
 
     var body: some View {
-        let dates = RelativeDate(now: store.now)
+        let dates = store.dates
         let notes = store.notes(in: space)
         let who = space == .shared
             ? store.partner.map { "Shared with \($0.name)" } ?? "Shared space"
