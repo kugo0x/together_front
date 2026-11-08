@@ -74,39 +74,10 @@ struct TasksScreen: View {
         return "\(active) to do · \(who)"
     }
 
-    // MARK: Actions
+    // MARK: Actions (shared with Home)
 
-    private func toggle(_ task: TaskItem) {
-        let space = space
-        let animation = Animation.tg(.easeInOut(duration: 0.2), reduceMotion: reduceMotion)
-        if task.done {
-            withAnimation(animation) { _ = store.reopenTask(task.id, in: space) }
-            return
-        }
-        guard let result = withAnimation(animation, { store.completeTask(task.id, in: space) }) else { return }
-        let undo: @MainActor () -> Void = { _ = store.reopenTask(task.id, in: space) }
-        if result.rolled, let next = result.task.dueDay {
-            toasts.showUndo("Done · next one " + store.dates.due(next.at(calendar: store.calendar)), undo: undo)
-        } else {
-            toasts.showUndo("Task done", undo: undo)
-        }
-    }
-
-    private func delete(_ task: TaskItem) {
-        guard let removed = store.deleteTask(task.id, in: space) else { return }
-        toasts.showUndo("Task deleted") { store.undoDeleteTask(removed) }
-    }
-
-    private func create(_ draft: AppStore.TaskDraft) {
-        guard let task = store.createTask(draft, in: space) else { return }
-        let partner = store.partner
-        if let reminder = task.reminder {
-            let when = store.dates.reminder(reminder.remindAt)
-            toasts.show(reminder.recipient == store.me ? "Reminder set for \(when)" : "\(reminder.recipient.name) will be reminded \(when)")
-        } else if let assignee = task.assignee, assignee == partner, assignee != store.me {
-            toasts.show("Added · \(assignee.name) will see it in Tasks")
-        } else {
-            toasts.show("Task added")
-        }
-    }
+    private var flows: TaskFlows { TaskFlows(store: store, toasts: toasts, space: space, reduceMotion: reduceMotion) }
+    private func toggle(_ task: TaskItem) { flows.toggle(task.id, done: task.done) }
+    private func delete(_ task: TaskItem) { flows.delete(task.id) }
+    private func create(_ draft: AppStore.TaskDraft) { flows.create(draft) }
 }

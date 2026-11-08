@@ -13,8 +13,10 @@ struct ReturnKeepingTextField: UIViewRepresentable {
     var textColor: Color = TG.Colors.ink
     var placeholderColor: Color = TG.Colors.ink2
     var tint: Color = TG.Colors.ink
-    /// Called with the current text when return is pressed; the field keeps focus.
-    var onReturn: (String) -> Void
+    /// Called with the current text when return is pressed; the field keeps focus. Return `true` to have the
+    /// field cleared right away — synchronously, so keys typed straight after return start a fresh entry instead
+    /// of landing on the old text before SwiftUI's update arrives ("Apples500 g coffee beans").
+    var onReturn: (String) -> Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -66,7 +68,10 @@ struct ReturnKeepingTextField: UIViewRepresentable {
         }
 
         func textFieldShouldReturn(_ field: UITextField) -> Bool {
-            parent.onReturn(field.text ?? "")
+            if parent.onReturn(field.text ?? "") {
+                field.text = ""
+                parent.text = ""
+            }
             return false
         }
 

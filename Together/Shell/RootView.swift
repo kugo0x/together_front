@@ -4,7 +4,7 @@ import SwiftUI
 /// the space switcher trailing. Owns the global space (persisted), the store and the toast centre.
 struct RootView: View {
     @AppStorage(SpaceSetting.key) private var space: SpaceKind = SpaceSetting.defaultValue
-    @State private var tab: AppTab = RootView.launchTab
+    @State private var router = AppRouter(tab: RootView.launchTab)
     @State private var store: AppStore
     @State private var toasts = ToastCenter()
     @State private var showSettings = false
@@ -20,10 +20,12 @@ struct RootView: View {
         if let initial = UserDefaults.standard.string(forKey: "initialSpace"), SpaceKind(rawValue: initial) != nil {
             UserDefaults.standard.set(initial, forKey: SpaceSetting.key)
         }
+        // `-alone YES` (launch argument): nobody has joined Shared yet — shows the invite banner.
+        if UserDefaults.standard.bool(forKey: "alone") { _store.wrappedValue.partner = nil }
     }
 
     var body: some View {
-        TabView(selection: $tab) {
+        TabView(selection: $router.tab) {
             ForEach(AppTab.allCases) { tab in
                 NavigationStack {
                     screen(for: tab)
@@ -50,6 +52,7 @@ struct RootView: View {
         .environment(\.space, space)
         .environment(\.selectSpace, SelectSpaceAction { [$space] in $space.wrappedValue = $0 })
         .environment(store)
+        .environment(router)
         .environment(toasts)
     }
 
