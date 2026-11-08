@@ -52,14 +52,28 @@ struct TaskItem: Identifiable, Codable, Hashable, Sendable {
     var title: String
     /// Optional description, shown in the task sheet.
     var notes: String?
-    var due: Date?
+    /// The day it's due (no time of day in the MVP UI; the API also allows one).
+    var dueDay: CalendarDay?
+    /// Needs a due date.
     var repeatRule: RepeatRule?
-    /// Shared tasks only; `nil` = anyone.
+    /// Day of month a monthly repeat sticks to (the day it started on).
+    var anchorDay: Int = 0
+    /// Shared: a member or `nil` = Anyone. Personal: always the owner.
     var assignee: Person?
-    /// One reminder per task, assigned tasks only.
-    var reminderAt: Date?
+    /// One reminder per task, for the assignee only (never "Anyone").
+    var reminder: TaskReminder?
+    var createdBy: Person?
     var done: Bool = false
     var doneBy: Person?
+    var doneAt: Date?
+    /// Also set for repeating tasks, which never stay done.
+    var lastDoneBy: Person?
+    var lastDoneAt: Date?
+    /// The due date before the last roll (Undo of a repeating completion).
+    var previousDueDay: CalendarDay?
+
+    /// Start of the due day in `calendar` — for date wording ("Today", "Sat").
+    func dueDate(calendar: Calendar = .current) -> Date? { dueDay?.at(calendar: calendar) }
 }
 
 struct ChecklistItem: Identifiable, Codable, Hashable, Sendable {

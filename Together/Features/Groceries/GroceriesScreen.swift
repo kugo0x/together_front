@@ -17,7 +17,7 @@ struct GroceriesScreen: View {
     var body: some View {
         // Re-render every minute so "2 min ago" stays true.
         TimelineView(.everyMinute) { _ in
-            list(dates: RelativeDate(now: store.now))
+            list(dates: store.dates)
         }
         .toastHost()
         .safeAreaInset(edge: .bottom, spacing: 0) { quickAddBar }

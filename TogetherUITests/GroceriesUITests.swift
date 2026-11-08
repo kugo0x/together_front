@@ -8,7 +8,7 @@ final class GroceriesUITests: XCTestCase {
     override func setUp() async throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-initialTab", "groceries", "-activeSpace", "shared"]
+        app.launchArguments = ["-initialTab", "groceries", "-activeSpace", "shared", "-noNotifications", "YES"]
         app.launch()
     }
 

@@ -81,10 +81,10 @@ struct AppStoreTests {
 
     @Test func completingATaskAndUndo() throws {
         let store = makeStore()
-        let task = try #require(store.pendingTasks(in: .shared).first)
-        let previous = try #require(store.setTask(task.id, done: true))
+        let task = try #require(store.pendingTasks(in: .shared).first { $0.repeatRule == nil })
+        _ = try #require(store.completeTask(task.id, in: .shared))
         #expect(store.doneTasks(in: .shared).first { $0.id == task.id }?.doneBy == .alex)
-        store.restore(previous)
+        _ = store.reopenTask(task.id, in: .shared)
         #expect(store.pendingTasks(in: .shared).contains { $0.id == task.id })
     }
 

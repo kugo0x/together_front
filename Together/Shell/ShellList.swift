@@ -65,10 +65,10 @@ extension TaskRow {
     init(task: TaskItem, dates: RelativeDate, me: Person, showSpace: SpaceKind? = nil, onToggle: @escaping () -> Void) {
         self.init(
             title: task.title,
-            due: task.due.map(dates.due),
-            dueIsUrgent: !task.done && (task.due.map(dates.isUrgent) ?? false),
+            due: task.dueDate(calendar: dates.calendar).map(dates.due),
+            dueIsUrgent: !task.done && (task.dueDate(calendar: dates.calendar).map(dates.isUrgent) ?? false),
             repeatText: task.repeatRule?.label,
-            reminder: task.assignee == nil ? nil : task.reminderAt.map(dates.reminder),
+            reminder: task.reminder.map { dates.reminder($0.remindAt) },
             assignee: task.space == .shared ? task.assignee.map(TaskAssignee.person) ?? .anyone : nil,
             done: task.done,
             doneBy: task.doneBy,
