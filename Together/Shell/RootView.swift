@@ -21,7 +21,7 @@ struct RootView: View {
                         .togetherNavigation(title: title(for: tab), me: store.me, space: $space) {
                             showSettings = true
                         }
-                        .toastHost()
+                        .toastHost(enabled: tab != .groceries)
                 }
                 .tabItem { Label(tab.title, systemImage: tab.icon.systemName) }
                 .tag(tab)

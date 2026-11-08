@@ -26,6 +26,8 @@ struct GroceryItem: Identifiable, Codable, Hashable, Sendable {
     var name: String
     var qty: String?
     var note: String?
+    /// Who put it on the list — the row says "Sam added" when it was the partner and there is no note.
+    var addedBy: Person?
     var done: Bool = false
     var boughtBy: Person?
     var boughtAt: Date?

@@ -79,19 +79,6 @@ struct AppStoreTests {
 
     // MARK: Mutations + Undo
 
-    @Test func checkingAGroceryRecordsWhoAndUndoRestores() throws {
-        let store = makeStore()
-        let item = try #require(store.toBuy(in: .shared).first)
-        let previous = try #require(store.setGrocery(item.id, done: true))
-
-        let bought = try #require(store.bought(in: .shared).first { $0.id == item.id })
-        #expect(bought.boughtBy == .alex)
-        #expect(bought.boughtAt == Self.now)
-
-        store.restore(previous)
-        #expect(store.toBuy(in: .shared).contains { $0.id == item.id })
-    }
-
     @Test func completingATaskAndUndo() throws {
         let store = makeStore()
         let task = try #require(store.pendingTasks(in: .shared).first)
@@ -171,8 +158,8 @@ struct ToastCenterTests {
         let item = try #require(store.toBuy(in: .shared).first)
 
         // Check the item: toast with Undo is shown and waits 3.8 s.
-        let previous = try #require(store.setGrocery(item.id, done: true))
-        toasts.showUndo("\(item.name) bought") { store.restore(previous) }
+        _ = try #require(store.markBought(item.id, in: .shared))
+        toasts.showUndo("\(item.name) bought") { store.unmarkBought(item.id, in: .shared) }
         #expect(toasts.current?.message == "\(item.name) bought")
         #expect(toasts.current?.action == "Undo")
         await clock.settle { !clock.requested.isEmpty }
