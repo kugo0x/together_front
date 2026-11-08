@@ -110,12 +110,20 @@ struct TaskSheet: View {
                         if recipient != nil { reminderSection }
                         notesField
                     }
-                    actions
+                    if let onDelete {
+                        TGButton("Delete task", icon: .trash, variant: .destructive, block: true) {
+                            dismiss()
+                            onDelete()
+                        }
+                        .padding(.top, TG.Space.s2)
+                    }
                 }
                 .padding(TG.Space.s5)
                 .animation(.easeInOut(duration: 0.2), value: hasTitle)
             }
             .scrollDismissesKeyboard(.interactively)
+            // Pinned so it stays above the keyboard while the title field is focused.
+            .safeAreaInset(edge: .bottom, spacing: 0) { primaryAction }
             .background(TG.Colors.surface)
             .navigationTitle(isNew ? "New task" : "Edit task")
             .navigationBarTitleDisplayMode(.inline)
@@ -139,6 +147,12 @@ struct TaskSheet: View {
             .foregroundStyle(TG.Colors.ink)
             .focused($titleFocused)
             .submitLabel(.done)
+            // Vertical so long titles wrap; return still means "done", not a line break.
+            .onChange(of: title) { _, new in
+                guard new.contains("\n") else { return }
+                title = new.replacingOccurrences(of: "\n", with: "")
+                titleFocused = false
+            }
             .padding(.horizontal, TG.Space.s4)
             .padding(.vertical, TG.Space.s3)
             .background(TG.Colors.surface2, in: RoundedRectangle(cornerRadius: TG.Radius.md, style: .continuous))
@@ -255,22 +269,17 @@ struct TaskSheet: View {
         }
     }
 
-    private var actions: some View {
-        VStack(spacing: TG.Space.s3) {
-            TGButton(isNew ? "Add task" : "Save", icon: isNew ? .plus : nil, block: true) {
-                onSave(draft)
-                dismiss()
-            }
-            .disabled(!hasTitle)
-            .opacity(hasTitle ? 1 : DS.disabledOpacity)
-            if let onDelete {
-                TGButton("Delete task", icon: .trash, variant: .destructive, block: true) {
-                    dismiss()
-                    onDelete()
-                }
-            }
+    private var primaryAction: some View {
+        TGButton(isNew ? "Add task" : "Save", icon: isNew ? .plus : nil, block: true) {
+            onSave(draft)
+            dismiss()
         }
-        .padding(.top, TG.Space.s2)
+        .disabled(!hasTitle)
+        .opacity(hasTitle ? 1 : DS.disabledOpacity)
+        .padding(.horizontal, TG.Space.s5)
+        .padding(.vertical, TG.Space.s3)
+        .background(TG.Colors.surface)
+        .overlay(alignment: .top) { TG.Colors.separator.frame(height: DS.hairline) }
     }
 
     // MARK: Helpers
