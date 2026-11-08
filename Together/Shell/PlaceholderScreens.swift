@@ -61,55 +61,6 @@ struct HomeScreen: View {
     }
 }
 
-struct GroceriesScreen: View {
-    @Environment(AppStore.self) private var store
-    @Environment(ToastCenter.self) private var toasts
-    @Environment(\.space) private var space
-
-    var body: some View {
-        let dates = RelativeDate(now: store.now)
-        let toBuy = store.toBuy(in: space)
-        let bought = store.bought(in: space)
-
-        ShellList(subtitle: subtitle(toBuy: toBuy.count)) {
-            if toBuy.isEmpty && bought.isEmpty {
-                EmptyState(title: "Nothing to buy", message: space == .shared
-                    ? "Add something and Sam will see it right away."
-                    : "Only you can see this list.")
-                    .listRowBackground(Color.clear)
-            }
-            if !toBuy.isEmpty {
-                ShellSection(title: "To buy", count: toBuy.count) {
-                    ForEach(toBuy) { item in
-                        GroceryItemRow(item: item, dates: dates, me: store.me) { toggle(item) }
-                    }
-                }
-            }
-            if !bought.isEmpty {
-                ShellSection(title: "Bought", count: bought.count) {
-                    ForEach(bought) { item in
-                        GroceryItemRow(item: item, dates: dates, me: store.me) { toggle(item) }
-                    }
-                }
-            }
-        }
-    }
-
-    private func subtitle(toBuy: Int) -> String {
-        let who = space == .shared
-            ? (store.partner == nil ? "Shared space" : "Shared with \(store.partner!.name)")
-            : "Only you can see this list"
-        return "\(toBuy) to buy · \(who)"
-    }
-
-    private func toggle(_ item: GroceryItem) {
-        guard let previous = store.setGrocery(item.id, done: !item.done) else { return }
-        if !item.done {
-            toasts.showUndo("\(item.name) bought") { store.restore(previous) }
-        }
-    }
-}
-
 struct TasksScreen: View {
     @Environment(AppStore.self) private var store
     @Environment(ToastCenter.self) private var toasts

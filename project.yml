@@ -43,13 +43,27 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Together.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Together"
         BUNDLE_LOADER: "$(TEST_HOST)"
+  TogetherUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: TogetherUITests
+    dependencies:
+      - target: Together
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.together.TogetherUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Together
 schemes:
   Together:
     build:
       targets:
         Together: all
         TogetherTests: [test]
+        TogetherUITests: [test]
     test:
       targets:
         - TogetherTests
+        - TogetherUITests
       gatherCoverageData: false

@@ -11,7 +11,7 @@ struct QuickAdd: View {
     let onAdd: (_ name: String, _ qty: String?) -> Void
 
     @State private var text = ""
-    @FocusState private var focused: Bool
+    @State private var focused = false
     @Environment(\.accent) private var accent
     @ScaledMetric(relativeTo: .body) private var goSize: CGFloat = 38
     @ScaledMetric(relativeTo: .body) private var minHeight: CGFloat = 52
@@ -21,16 +21,16 @@ struct QuickAdd: View {
     var body: some View {
         VStack(alignment: .leading, spacing: TG.Space.s2) {
             HStack(spacing: TG.Space.s2) {
-                TextField(placeholder, text: $text, prompt: Text(placeholder).foregroundStyle(TG.Colors.ink2))
-                    .font(TG.Font.body)
-                    .foregroundStyle(TG.Colors.ink)
-                    .tint(accent.fill)
-                    .focused($focused)
-                    .submitLabel(.done)
-                    .onSubmit(submit)
-                    .accessibilityLabel(placeholder)
+                ReturnKeepingTextField(
+                    text: $text,
+                    isFocused: $focused,
+                    placeholder: placeholder,
+                    tint: accent.fill,
+                    onReturn: submit
+                )
+                .frame(maxWidth: .infinity)
 
-                Button(action: submit) {
+                Button { submit() } label: {
                     Icon(.arrowUp)
                         .font(TG.Font.body.weight(.semibold))
                         .foregroundStyle(accent.on)
@@ -66,13 +66,13 @@ struct QuickAdd: View {
         .onAppear { if autoFocus { focused = true } }
     }
 
-    private func submit() {
-        guard let result = QuantityParser.groceryInput(text) else { return }
+    private func submit() { submit(text) }
+
+    /// Adds the item and clears the field; focus never leaves it (see `ReturnKeepingTextField`).
+    private func submit(_ input: String) {
+        guard let result = QuantityParser.groceryInput(input) else { return }
         onAdd(result.name, result.qty)
         text = ""
-        // Return ends editing by default; put focus straight back so the next item can follow.
-        focused = true
-        DispatchQueue.main.async { focused = true }
     }
 }
 

@@ -28,13 +28,16 @@ struct ShellList<Content: View>: View {
 struct ShellSection<Content: View>: View {
     let title: String
     var count: Int?
+    /// One quiet header action ("Show", "History").
+    var action: String?
+    var onAction: () -> Void = {}
     @ViewBuilder var content: Content
 
     var body: some View {
         Section {
             content.tgListRow()
         } header: {
-            SectionHeader(title: title, count: count)
+            SectionHeader(title: title, count: count, action: action, onAction: onAction)
                 .textCase(nil)
                 .listRowInsets(EdgeInsets())
         }
@@ -48,7 +51,7 @@ extension GroceryItemRow {
         self.init(
             name: item.name,
             qty: item.qty,
-            note: item.note,
+            note: item.note ?? item.addedBy.flatMap { $0 == me ? nil : "\($0.name) added" },
             done: item.done,
             by: item.boughtBy,
             when: item.viaReceipt ? "via receipt" : item.boughtAt.map { dates.past($0, midSentence: true) },

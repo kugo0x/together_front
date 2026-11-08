@@ -66,13 +66,15 @@ final class ToastCenter {
 
 /// Shows the current toast bottom-centre, above the tab bar (the modified view's bottom safe-area edge).
 struct ToastHost: ViewModifier {
+    /// Off where a screen hosts the toast itself (Groceries, to sit above its QuickAdd bar).
+    var enabled = true
     @Environment(ToastCenter.self) private var toasts
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .bottom) {
             ZStack {
-                if let item = toasts.current {
+                if enabled, let item = toasts.current {
                     Toast(message: item.message, person: item.person, action: item.action) {
                         toasts.performAction()
                     }
@@ -88,5 +90,5 @@ struct ToastHost: ViewModifier {
 }
 
 extension View {
-    func toastHost() -> some View { modifier(ToastHost()) }
+    func toastHost(enabled: Bool = true) -> some View { modifier(ToastHost(enabled: enabled)) }
 }

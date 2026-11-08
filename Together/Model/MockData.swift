@@ -27,13 +27,13 @@ struct MockData: Sendable {
         let personal = GroceryList(space: .personal)
 
         let groceries: [GroceryItem] = [
-            .init(listID: shared.id, name: "Oat milk", qty: "2", note: "Sam added"),
+            .init(listID: shared.id, name: "Oat milk", qty: "2", addedBy: .sam),
             .init(listID: shared.id, name: "Tomatoes", qty: "1 kg"),
             .init(listID: shared.id, name: "Sourdough bread"),
             .init(listID: shared.id, name: "Greek yogurt", qty: "2"),
             .init(listID: shared.id, name: "Spinach", note: "For Sunday’s pasta"),
             .init(listID: shared.id, name: "Chicken thighs", qty: "1 kg"),
-            .init(listID: shared.id, name: "Lemons", qty: "3", note: "Sam added"),
+            .init(listID: shared.id, name: "Lemons", qty: "3", addedBy: .sam),
             .init(listID: shared.id, name: "Pasta", done: true, boughtBy: .sam, boughtAt: day(-1, 18)),
             .init(listID: shared.id, name: "Olive oil", done: true, boughtBy: .alex, boughtAt: day(-1, 18)),
             .init(listID: personal.id, name: "Protein bars", qty: "6"),
