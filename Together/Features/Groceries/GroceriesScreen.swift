@@ -13,6 +13,8 @@ struct GroceriesScreen: View {
 
     @State private var showBought = false
     @State private var editing: GroceryItem?
+    @State private var focusQuickAdd = 0
+    @Environment(AppRouter.self) private var router
 
     var body: some View {
         // Re-render every minute so "2 min ago" stays true.
@@ -21,6 +23,9 @@ struct GroceriesScreen: View {
         }
         .toastHost()
         .safeAreaInset(edge: .bottom, spacing: 0) { quickAddBar }
+        // Home's "Item" quick action: focus the field once this tab is showing.
+        .onAppear(perform: takeFocusRequest)
+        .onChange(of: router.focusQuickAdd) { takeFocusRequest() }
         .sheet(item: $editing) { item in
             GroceryEditSheet(item: item) { name, qty, note in
                 store.updateItem(item.id, in: space, name: name, qty: qty, note: note)
@@ -93,7 +98,7 @@ struct GroceriesScreen: View {
     }
 
     private var quickAddBar: some View {
-        QuickAdd(placeholder: space == .shared ? "Add to Shared groceries" : "Add to my list") { name, qty in
+        QuickAdd(placeholder: space == .shared ? "Add to Shared groceries" : "Add to my list", focusTrigger: focusQuickAdd) { name, qty in
             withAnimation(.tg(.easeOut(duration: 0.2), reduceMotion: reduceMotion)) {
                 _ = store.addItem(name: name, qty: qty, in: space)
             }
@@ -103,6 +108,12 @@ struct GroceriesScreen: View {
         .padding(.bottom, TG.Space.s2)
         .background(TG.Colors.bg)
         .overlay(alignment: .top) { TG.Colors.separator.frame(height: DS.hairline) }
+    }
+
+    private func takeFocusRequest() {
+        guard router.focusQuickAdd else { return }
+        router.focusQuickAdd = false
+        focusQuickAdd += 1
     }
 
     // MARK: Copy

@@ -8,6 +8,7 @@ struct NotesScreen: View {
 
     @State private var query = ""
     @State private var openNote: Note.ID?
+    @Environment(AppRouter.self) private var router
 
     var body: some View {
         TimelineView(.everyMinute) { _ in
@@ -15,6 +16,9 @@ struct NotesScreen: View {
         }
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search notes")
         .onChange(of: space) { query = "" }
+        // Home's note rows and "Note" quick action open the editor here.
+        .onAppear(perform: takeOpenRequest)
+        .onChange(of: router.openNote) { takeOpenRequest() }
         .navigationDestination(item: $openNote) { id in
             NoteEditor(noteID: id)
         }
@@ -75,6 +79,13 @@ struct NotesScreen: View {
             ? store.partner.map { "Shared with \($0.name)" } ?? "Shared space"
             : "Only you can see these"
         return (count == 1 ? "1 note" : "\(count) notes") + " · " + who
+    }
+
+    private func takeOpenRequest() {
+        guard let id = router.openNote else { return }
+        router.openNote = nil
+        query = ""
+        openNote = id
     }
 
     private func newNote() {

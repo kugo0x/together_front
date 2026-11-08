@@ -23,7 +23,7 @@ Runs the unit tests (`TogetherTests`) and the UI tests (`TogetherUITests`, ~2 mi
 UI tests launch the app with `-noNotifications YES` so no permission alert appears.
 
 Launch arguments for checks and screenshots: `-initialTab home|groceries|tasks|notes`, `-initialSpace shared|personal` (sets the starting space; switching still works),
-`-noNotifications YES`, `-demoToast partner|undo`, `-catalog YES` (design-system catalog).
+`-noNotifications YES`, `-alone YES` (no partner yet: invite banner), `-demoToast partner|undo`, `-catalog YES` (design-system catalog).
 
 ## Layout
 
@@ -33,7 +33,7 @@ Launch arguments for checks and screenshots: `-initialTab home|groceries|tasks|n
 - `Together/DesignSystem/Catalog/` — `ComponentCatalog` (all galleries; open with `-catalog YES`).
 - `Together/Model/` — client model (HANDOFF §4), mock data, task rules (mirror of `back/internal/task/domain`).
 - `Together/Store/` — in-memory `AppStore` (methods shaped like the backend API) and reminder notifications.
-- `Together/Shell/` — tab shell, global space, toast overlay; `Together/Features/` — Groceries, Tasks.
+- `Together/Shell/` — tab shell, global space, router, toast overlay; `Together/Features/` — Home, Groceries, Tasks, Notes.
 - `TogetherTests/` — unit tests (Swift Testing) and an opt-in snapshot renderer; `TogetherUITests/` — XCUITest flows.
 
 The design system lives in the app module (not a separate package) because the generated `Tokens.swift` uses internal access.

@@ -8,6 +8,8 @@ struct QuickAdd: View {
     /// First-run tip under the field only.
     var hint: String?
     var autoFocus = false
+    /// Bump to put focus in the field (e.g. Home's "Item" quick action).
+    var focusTrigger = 0
     let onAdd: (_ name: String, _ qty: String?) -> Void
 
     @State private var text = ""
@@ -64,15 +66,18 @@ struct QuickAdd: View {
             }
         }
         .onAppear { if autoFocus { focused = true } }
+        .onChange(of: focusTrigger) { focused = true }
     }
 
-    private func submit() { submit(text) }
+    private func submit() {
+        if submit(text) { text = "" }
+    }
 
-    /// Adds the item and clears the field; focus never leaves it (see `ReturnKeepingTextField`).
-    private func submit(_ input: String) {
-        guard let result = QuantityParser.groceryInput(input) else { return }
+    /// Adds the item; `true` tells the field to clear itself. Focus never leaves it (see `ReturnKeepingTextField`).
+    private func submit(_ input: String) -> Bool {
+        guard let result = QuantityParser.groceryInput(input) else { return false }
         onAdd(result.name, result.qty)
-        text = ""
+        return true
     }
 }
 
