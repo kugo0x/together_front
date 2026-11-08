@@ -15,6 +15,11 @@ struct RootView: View {
             ? NoReminderNotifications()
             : UserNotificationReminders()
         _store = State(initialValue: store ?? AppStore(notifier: notifier))
+        // `-initialSpace shared|personal` (launch argument) sets the starting space once and leaves it switchable —
+        // unlike `-activeSpace`, which pins the stored value for the whole run.
+        if let initial = UserDefaults.standard.string(forKey: "initialSpace"), SpaceKind(rawValue: initial) != nil {
+            UserDefaults.standard.set(initial, forKey: SpaceSetting.key)
+        }
     }
 
     var body: some View {
@@ -25,8 +30,9 @@ struct RootView: View {
                         .togetherNavigation(title: title(for: tab), me: store.me, space: $space) {
                             showSettings = true
                         }
-                        .toastHost(enabled: tab != .groceries)
                 }
+                // On the stack, so pushed screens (the note editor) show toasts too.
+                .toastHost(enabled: tab != .groceries)
                 .tabItem { Label(tab.title, systemImage: tab.icon.systemName) }
                 .tag(tab)
             }
@@ -42,6 +48,7 @@ struct RootView: View {
             }
         }
         .environment(\.space, space)
+        .environment(\.selectSpace, SelectSpaceAction { [$space] in $space.wrappedValue = $0 })
         .environment(store)
         .environment(toasts)
     }

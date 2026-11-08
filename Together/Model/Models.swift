@@ -80,6 +80,8 @@ struct ChecklistItem: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
     var label: String
     var done: Bool = false
+    var doneBy: Person?
+    var doneAt: Date?
 }
 
 /// Plain-text body plus a checklist; no formatting in the MVP.
@@ -91,6 +93,36 @@ struct Note: Identifiable, Codable, Hashable, Sendable {
     var checklist: [ChecklistItem] = []
     var updatedAt: Date
     var updatedBy: Person
+    var createdBy: Person? = nil
+    /// Bumped by every title/body save; sent back as `If-Match`. Checklist changes don't bump it.
+    var version: Int = 1
+
+    var isEmpty: Bool {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && checklist.isEmpty
+    }
+
+    /// The row title: the title, or the body's first line when there is none.
+    var displayTitle: String {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        return bodyLines.first ?? (checklist.isEmpty ? "Untitled" : "Checklist")
+    }
+
+    /// The row preview: the body (lines joined), or the checklist as "Passport, Chargers".
+    var preview: String? {
+        let lines = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Array(bodyLines.dropFirst()) : bodyLines
+        if !lines.isEmpty { return lines.joined(separator: " · ") }
+        let items = checklist.map(\.label).filter { !$0.isEmpty }
+        return items.isEmpty ? nil : items.joined(separator: ", ")
+    }
+
+    private var bodyLines: [String] {
+        body.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
 }
 
 struct ReceiptLine: Identifiable, Codable, Hashable, Sendable {

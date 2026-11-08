@@ -27,6 +27,8 @@ final class AppStore {
     private(set) var trips: [Trip]
     private(set) var suggestionsBySpace: [SpaceKind: [Suggestion]]
     private(set) var sampleReceipt: [ReceiptLine]
+    @ObservationIgnored private var deletedNotes: [Note.ID: DeletedNote] = [:]
+    @ObservationIgnored private var moveUndos: [Note.ID: MoveUndo] = [:]
 
     /// Each person's do-not-disturb window (Settings later; the API keeps it per user).
     var quietHours: [Person: QuietHours] = [.alex: .default, .sam: .default]
@@ -350,10 +352,158 @@ final class AppStore {
     /// Date wording in the store's clock and zone.
     var dates: RelativeDate { RelativeDate(now: now, calendar: calendar) }
 
-    // MARK: Notes (phase 5 extends these)
+    // MARK: Notes — /v1/spaces/{id}/notes, …/move, …/restore, …/items
 
+    /// A title/body save lost to a newer version (PATCH → 409 `version_conflict`); `current` is the note as it is now.
+    struct NoteConflict: Error {
+        let current: Note
+    }
+
+    /// A deleted note, restorable until `restoreUntil` (the API keeps it for an hour).
+    struct DeletedNote {
+        let note: Note
+        let restoreUntil: Date
+    }
+
+    /// Where and until when a move can be undone (the API allows 10 minutes, same person).
+    struct MoveUndo: Equatable {
+        let noteID: Note.ID
+        let backTo: SpaceKind
+        let until: Date
+    }
+
+    /// GET …/notes — most recently updated first.
     func notes(in space: SpaceKind) -> [Note] {
         notes.filter { $0.space == space }.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// GET …/notes?q= — titles, bodies and checklist text of THIS space only. Case and Polish letters don't
+    /// matter ("gdan" finds "Gdańsk"); every word must match as a word prefix.
+    func searchNotes(_ query: String, in space: SpaceKind) -> [Note] {
+        let terms = Self.searchWords(query)
+        guard !terms.isEmpty else { return notes(in: space) }
+        return notes(in: space).filter { note in
+            let words = Self.searchWords(([note.title, note.body] + note.checklist.map(\.label)).joined(separator: " "))
+            return terms.allSatisfy { term in words.contains { $0.hasPrefix(term) } }
+        }
+    }
+
+    func note(_ id: Note.ID, in space: SpaceKind) -> Note? {
+        notes.first { $0.id == id && $0.space == space }
+    }
+
+    /// POST …/notes — plain text plus an optional checklist.
+    @discardableResult
+    func createNote(in space: SpaceKind, title: String = "", body: String = "", items: [String] = []) -> Note {
+        let now = now
+        let note = Note(
+            space: space,
+            title: String(title.prefix(Limits.noteTitle)),
+            body: String(body.prefix(Limits.noteBody)),
+            checklist: items.prefix(Limits.noteItems).map { ChecklistItem(label: String($0.prefix(Limits.noteItem))) },
+            updatedAt: now,
+            updatedBy: me,
+            createdBy: me
+        )
+        notes.append(note)
+        return note
+    }
+
+    /// PATCH …/notes/{id} with `If-Match: version`. A stale version fails with the current note to merge.
+    func updateNote(
+        _ id: Note.ID, in space: SpaceKind, title: String, body: String, ifMatch version: Int
+    ) -> Result<Note, NoteConflict>? {
+        guard let i = noteIndex(id, in: space) else { return nil }
+        guard notes[i].version == version else { return .failure(NoteConflict(current: notes[i])) }
+        notes[i].title = String(title.prefix(Limits.noteTitle))
+        notes[i].body = String(body.prefix(Limits.noteBody))
+        notes[i].version += 1
+        touch(i)
+        return .success(notes[i])
+    }
+
+    /// DELETE …/notes/{id} — soft; `restoreNote` brings it back within the hour.
+    @discardableResult
+    func deleteNote(_ id: Note.ID, in space: SpaceKind) -> DeletedNote? {
+        guard let i = noteIndex(id, in: space) else { return nil }
+        let deleted = DeletedNote(note: notes.remove(at: i), restoreUntil: now.addingTimeInterval(3600))
+        deletedNotes[id] = deleted
+        return deleted
+    }
+
+    /// POST …/notes/{id}/restore — Undo of a delete; `nil` once the window has passed (410).
+    @discardableResult
+    func restoreNote(_ id: Note.ID, in space: SpaceKind) -> Note? {
+        guard let deleted = deletedNotes[id], deleted.note.space == space, now <= deleted.restoreUntil else { return nil }
+        deletedNotes[id] = nil
+        notes.append(deleted.note)
+        return deleted.note
+    }
+
+    /// POST …/notes/{id}/move — the only way a note changes space: my Personal note into Shared (after the
+    /// ConfirmSheet), or the Undo of that move within 10 minutes. Returns the note and, for a forward move, the undo.
+    func moveNote(_ id: Note.ID, from space: SpaceKind, to target: SpaceKind) -> (note: Note, undo: MoveUndo?)? {
+        guard let i = noteIndex(id, in: space), space != target else { return nil }
+        if space == .personal, target == .shared {
+            guard partner != nil else { return nil } // no Shared space to move into yet
+            notes[i].space = .shared
+            touch(i)
+            let undo = MoveUndo(noteID: id, backTo: .personal, until: now.addingTimeInterval(600))
+            moveUndos[id] = undo
+            return (notes[i], undo)
+        }
+        // Back to Personal: only as the Undo of my own move, in time.
+        guard let undo = moveUndos[id], undo.backTo == target, now <= undo.until else { return nil }
+        moveUndos[id] = nil
+        notes[i].space = target
+        touch(i)
+        return (notes[i], nil)
+    }
+
+    // Checklist lines — never conflict with text edits, so they don't need or bump the version.
+
+    /// POST …/notes/{id}/items — at the end, or at `position`.
+    @discardableResult
+    func addChecklistItem(_ text: String, to id: Note.ID, in space: SpaceKind, at position: Int? = nil) -> ChecklistItem? {
+        guard let i = noteIndex(id, in: space), notes[i].checklist.count < Limits.noteItems else { return nil }
+        let item = ChecklistItem(label: String(text.prefix(Limits.noteItem)))
+        let at = min(max(position ?? notes[i].checklist.count, 0), notes[i].checklist.count)
+        notes[i].checklist.insert(item, at: at)
+        touch(i)
+        return item
+    }
+
+    /// PATCH …/items/{itemID} — tick, rename or reorder one line.
+    @discardableResult
+    func updateChecklistItem(
+        _ itemID: ChecklistItem.ID, in noteID: Note.ID, space: SpaceKind,
+        text: String? = nil, done: Bool? = nil, position: Int? = nil
+    ) -> ChecklistItem? {
+        guard let i = noteIndex(noteID, in: space),
+              var j = notes[i].checklist.firstIndex(where: { $0.id == itemID }) else { return nil }
+        if let text { notes[i].checklist[j].label = String(text.prefix(Limits.noteItem)) }
+        if let done, done != notes[i].checklist[j].done {
+            notes[i].checklist[j].done = done
+            notes[i].checklist[j].doneBy = done ? me : nil
+            notes[i].checklist[j].doneAt = done ? now : nil
+        }
+        if let position {
+            let item = notes[i].checklist.remove(at: j)
+            j = min(max(position, 0), notes[i].checklist.count)
+            notes[i].checklist.insert(item, at: j)
+        }
+        touch(i)
+        return notes[i].checklist[j]
+    }
+
+    /// DELETE …/items/{itemID}.
+    @discardableResult
+    func deleteChecklistItem(_ itemID: ChecklistItem.ID, in noteID: Note.ID, space: SpaceKind) -> ChecklistItem? {
+        guard let i = noteIndex(noteID, in: space),
+              let j = notes[i].checklist.firstIndex(where: { $0.id == itemID }) else { return nil }
+        let item = notes[i].checklist.remove(at: j)
+        touch(i)
+        return item
     }
 
     // MARK: Private
@@ -362,6 +512,25 @@ final class AppStore {
     enum Limits {
         static let name = 80, qty = 20, note = 140
         static let taskTitle = 120, taskNotes = 2000
+        static let noteTitle = 200, noteBody = 20000, noteItem = 200, noteItems = 200
+    }
+
+    private func noteIndex(_ id: Note.ID, in space: SpaceKind) -> Int? {
+        notes.firstIndex { $0.id == id && $0.space == space }
+    }
+
+    /// "edited just now by you" — any change, checklist ticks included.
+    private func touch(_ i: Int) {
+        notes[i].updatedAt = now
+        notes[i].updatedBy = me
+    }
+
+    /// Lowercased words with diacritics (and the Polish ł, which doesn't decompose) folded away.
+    static func searchWords(_ text: String) -> [String] {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .replacingOccurrences(of: "ł", with: "l")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
     }
 
     private func taskIndex(_ id: TaskItem.ID, in space: SpaceKind) -> Int? {
