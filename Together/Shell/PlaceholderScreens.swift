@@ -60,39 +60,6 @@ struct HomeScreen: View {
     }
 }
 
-struct NotesScreen: View {
-    @Environment(AppStore.self) private var store
-    @Environment(\.space) private var space
-
-    var body: some View {
-        let dates = store.dates
-        let notes = store.notes(in: space)
-        let who = space == .shared
-            ? store.partner.map { "Shared with \($0.name)" } ?? "Shared space"
-            : "Only you can see these"
-
-        ShellList(subtitle: "\(notes.count) notes · \(who)") {
-            if notes.isEmpty {
-                EmptyState(
-                    title: space == .shared ? "No shared notes yet" : "Your private notes",
-                    message: space == .shared
-                        ? "Notes here are visible to both of you."
-                        : "Notes here are only for you. Sam can’t see them.",
-                    icon: .note
-                )
-                .listRowBackground(Color.clear)
-            } else {
-                Section {
-                    ForEach(notes) { note in
-                        NoteRow(note: note, dates: dates, me: store.me)
-                    }
-                    .tgListRow()
-                }
-            }
-        }
-    }
-}
-
 /// Reached from the avatar. Settings itself is phase 7.
 struct SettingsPlaceholder: View {
     @Environment(\.dismiss) private var dismiss

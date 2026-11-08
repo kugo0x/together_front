@@ -80,14 +80,15 @@ extension TaskRow {
 }
 
 extension NoteRow {
-    init(note: Note, dates: RelativeDate, me: Person, showSpace: SpaceKind? = nil) {
+    init(note: Note, dates: RelativeDate, me: Person, showSpace: SpaceKind? = nil, onTap: @escaping () -> Void = {}) {
         self.init(
-            title: note.title.isEmpty ? "Untitled" : note.title,
-            preview: note.body.split(separator: "\n").first.map(String.init),
+            title: note.displayTitle,
+            preview: note.preview,
             updated: dates.past(note.updatedAt),
             by: note.space == .shared ? note.updatedBy : nil,
             showSpace: showSpace,
-            me: me
+            me: me,
+            onTap: onTap
         )
     }
 }

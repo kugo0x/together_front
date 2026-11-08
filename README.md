@@ -22,7 +22,7 @@ Runs the unit tests (`TogetherTests`) and the UI tests (`TogetherUITests`, ~2 mi
 `-collect-test-diagnostics never` stops xcodebuild from spending up to 10 minutes on a sysdiagnose after a failure.
 UI tests launch the app with `-noNotifications YES` so no permission alert appears.
 
-Launch arguments for checks and screenshots: `-initialTab home|groceries|tasks|notes`, `-activeSpace shared|personal`,
+Launch arguments for checks and screenshots: `-initialTab home|groceries|tasks|notes`, `-initialSpace shared|personal` (sets the starting space; switching still works),
 `-noNotifications YES`, `-demoToast partner|undo`, `-catalog YES` (design-system catalog).
 
 ## Layout
