@@ -26,7 +26,7 @@ struct HomeScreen: View {
                 TaskSheet(mode: mode) { store.updateTask(task.id, in: space, with: $0) } onDelete: { flows.delete(task.id) }
             }
         }
-        .sheet(isPresented: $showInvite) { InviteSheetPlaceholder() }
+        .sheet(isPresented: $showInvite) { InviteSheet() }
     }
 
     private var flows: TaskFlows { TaskFlows(store: store, toasts: toasts, space: space, reduceMotion: reduceMotion) }
@@ -184,7 +184,7 @@ struct HomeScreen: View {
         let now = store.now
         let hour = store.calendar.component(.hour, from: now)
         let greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
-        return "\(store.dates.longDay(now)) · \(greeting), \(store.me.name)"
+        return "\(store.dates.longDay(now)) · \(greeting), \(store.myName)"
     }
 
     private func markBought(_ entry: HomeSummary.GroceryEntry) {
@@ -193,39 +193,5 @@ struct HomeScreen: View {
             _ = store.markBought(entry.id, in: space)
         }
         toasts.showUndo("\(entry.name) bought") { store.unmarkBought(entry.id, in: space) }
-    }
-}
-
-/// "Invite your partner" — the real invite (code + link) comes with accounts in phase 7.
-struct InviteSheetPlaceholder: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: TG.Space.s4) {
-            Icon(.people)
-                .font(TG.Font.title2)
-                .foregroundStyle(TG.Colors.sharedInk)
-                .frame(width: 56, height: 56)
-                .background(TG.Colors.sharedSoft, in: Circle())
-                .accessibilityHidden(true)
-            Text("Invite your partner")
-                .font(TG.Font.title3.weight(.semibold))
-                .foregroundStyle(TG.Colors.ink)
-                .accessibilityAddTraits(.isHeader)
-            Text("They’ll join your Shared space: groceries, household tasks and shared notes. Your Personal space stays private.")
-                .font(TG.Font.subhead)
-                .foregroundStyle(TG.Colors.ink2)
-                .multilineTextAlignment(.center)
-            Text("Invites open once accounts are set up.")
-                .font(TG.Font.footnote)
-                .foregroundStyle(TG.Colors.ink3)
-            TGButton("Close", variant: .secondary, block: true) { dismiss() }
-                .padding(.top, TG.Space.s2)
-        }
-        .padding(TG.Space.s5)
-        .environment(\.space, .shared)
-        .presentationDetents([.medium])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(TG.Colors.surface)
     }
 }

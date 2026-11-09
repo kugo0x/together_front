@@ -13,6 +13,14 @@ import Observation
 final class AppStore {
     /// The signed-in person.
     var me: Person = .alex
+    /// My display name (onboarding "What should we call you?", Settings). `me` stays the identity.
+    var myName = "Alex"
+    /// My profile picture, picked in Settings (JPEG/PNG data; `PUT /v1/me/avatar` in phase 9).
+    var myAvatar: Data?
+    /// Settings → Notifications (`/v1/me/settings` `notifications`).
+    var notificationPrefs = NotificationPrefs() {
+        didSet { if notificationPrefs.taskReminders != oldValue.taskReminders { resyncReminders() } }
+    }
     /// The other member of the Shared space, `nil` while alone.
     var partner: Person? = .sam
     /// Settings → "Suggestions" (phase 7). Off hides the card; nothing is ever added automatically either way.
@@ -506,6 +514,30 @@ final class AppStore {
         return item
     }
 
+    // MARK: Shared space membership — /v1/invites/{code}/accept, /v1/spaces/{id}/leave
+
+    /// Someone joined my Shared space (or I joined theirs).
+    func joinPartner(_ person: Person) {
+        partner = person
+    }
+
+    /// Leave the Shared space: everything in it stays with the partner; I keep only Personal.
+    func leaveShared() {
+        partner = nil
+        let sharedList = defaultList(for: .shared).id
+        groceryItems.removeAll { $0.listID == sharedList }
+        for task in tasks where task.space == .shared { notifier.cancel(id: task.id.uuidString) }
+        tasks.removeAll { $0.space == .shared }
+        notes.removeAll { $0.space == .shared }
+        trips.removeAll { $0.space == .shared }
+        suggestionsBySpace[.shared] = []
+    }
+
+    /// Re-checks every task's local notification (after a settings change).
+    func resyncReminders() {
+        for task in tasks { syncNotification(task) }
+    }
+
     // MARK: Private
 
     /// Field limits from the API (`name` 80, `qty` 20, `note` 140).
@@ -565,7 +597,8 @@ final class AppStore {
     /// Keeps the local notification in step with the task: only my own pending reminders, one per task id.
     private func syncNotification(_ task: TaskItem) {
         let id = task.id.uuidString
-        guard !task.done, let reminder = task.reminder, reminder.recipient == me, reminder.remindAt > now else {
+        guard notificationPrefs.taskReminders,
+              !task.done, let reminder = task.reminder, reminder.recipient == me, reminder.remindAt > now else {
             notifier.cancel(id: id)
             return
         }

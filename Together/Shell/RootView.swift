@@ -6,10 +6,13 @@ struct RootView: View {
     @AppStorage(SpaceSetting.key) private var space: SpaceKind = SpaceSetting.defaultValue
     @State private var router = AppRouter(tab: RootView.launchTab)
     @State private var store: AppStore
-    @State private var toasts = ToastCenter()
+    @Environment(Session.self) private var session
+    private let toasts: ToastCenter
     @State private var showSettings = false
+    @State private var showInvite = false
 
-    init(store: AppStore? = nil) {
+    init(store: AppStore? = nil, toasts: ToastCenter = ToastCenter()) {
+        self.toasts = toasts
         // `-noNotifications YES` (launch argument) keeps UI tests and screenshots free of the permission alert.
         let notifier: ReminderNotifying = UserDefaults.standard.bool(forKey: "noNotifications")
             ? NoReminderNotifications()
@@ -40,7 +43,25 @@ struct RootView: View {
             }
         }
         .tint(Accent.of(space).ink)
-        .sheet(isPresented: $showSettings) { SettingsPlaceholder() }
+        .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showInvite) { InviteSheet() }
+        .onAppear {
+            if let name = session.user?.displayName, !name.isEmpty { store.myName = name }
+            // A new account arrives alone, with the invite open, or already in someone's Shared space.
+            switch session.arrival {
+            case .solo?:
+                store.leaveShared()
+            case .invite?:
+                store.leaveShared()
+                showInvite = true
+            case .joined(let partner)?:
+                store.joinPartner(partner)
+                toasts.show("You joined \(partner.name)’s Shared space", person: partner)
+            case nil:
+                break
+            }
+            session.arrival = nil
+        }
         .task {
             // `-demoToast partner|undo` (launch argument) shows a toast on launch — for screenshots of the overlay.
             switch UserDefaults.standard.string(forKey: "demoToast") {

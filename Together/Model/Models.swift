@@ -147,3 +147,14 @@ struct Trip: Identifiable, Codable, Hashable, Sendable {
     var receiptImageID: String?
     var lines: [ReceiptLine] = []
 }
+
+/// Which notifications I get (back/api/openapi.yaml `Notifications`).
+struct NotificationPrefs: Codable, Hashable, Sendable {
+    /// My own task reminders (the local notifications).
+    var taskReminders = true
+    /// "Alex asked you to" when a partner assigns a task.
+    var taskAssigned = true
+    var partnerJoined = true
+    /// Stored for the planned shopping-day reminder; nothing sends it yet.
+    var groceryReminder = false
+}

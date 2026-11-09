@@ -8,7 +8,7 @@ final class TasksUITests: XCTestCase {
     override func setUp() async throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-initialTab", "tasks", "-initialSpace", "shared", "-noNotifications", "YES"]
+        app.launchArguments = ["-signedIn", "YES", "-initialTab", "tasks", "-initialSpace", "shared", "-noNotifications", "YES"]
         // Fallback: if a notification permission alert ever shows, dismiss it instead of blocking the test.
         addUIInterruptionMonitor(withDescription: "Notification permission") { alert in
             for label in ["Don’t Allow", "Don't Allow", "Allow"] where alert.buttons[label].exists {

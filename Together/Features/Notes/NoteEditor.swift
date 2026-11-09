@@ -157,17 +157,11 @@ struct NoteEditor: View {
                 store.updateChecklistItem(item.id, in: note.id, space: space, done: !item.done)
             }
             .environment(\.space, note.space)
-            TextField("Checklist item", text: Binding(
-                get: { item.label },
-                set: { store.updateChecklistItem(item.id, in: note.id, space: space, text: $0) }
-            ), prompt: Text("Item").foregroundStyle(TG.Colors.ink3))
-                .font(TG.Font.body)
-                .foregroundStyle(item.done ? TG.Colors.ink2 : TG.Colors.ink)
-                .strikethrough(item.done, color: TG.Colors.ink3)
-                .focused($focus, equals: .item(item.id))
-                .submitLabel(.next)
-                .accessibilityLabel("Checklist item")
-                .onSubmit { addItem(after: item, in: note) }
+            ChecklistLineField(item: item, focus: $focus) { text in
+                store.updateChecklistItem(item.id, in: note.id, space: space, text: text)
+            } onSubmit: {
+                addItem(after: item, in: note)
+            }
         }
         .frame(minHeight: DS.minTarget)
         .listRowInsets(EdgeInsets(top: 0, leading: TG.Space.s4, bottom: 0, trailing: TG.Space.s5))
@@ -310,6 +304,45 @@ struct NoteEditor: View {
         dismiss()
         guard !deleted.note.isEmpty else { return }
         toasts.showUndo("Note deleted") { store.restoreNote(noteID, in: space) }
+    }
+}
+
+/// One checklist line's text. It edits its own state and saves each change, instead of binding straight to the
+/// store: with a store round trip, return could submit before the last keystroke landed ("Passpor").
+private struct ChecklistLineField: View {
+    let item: ChecklistItem
+    var focus: FocusState<NoteEditor.Field?>.Binding
+    let save: (String) -> Void
+    let onSubmit: () -> Void
+
+    @State private var text: String
+
+    init(item: ChecklistItem, focus: FocusState<NoteEditor.Field?>.Binding,
+         save: @escaping (String) -> Void, onSubmit: @escaping () -> Void) {
+        self.item = item
+        self.focus = focus
+        self.save = save
+        self.onSubmit = onSubmit
+        _text = State(initialValue: item.label)
+    }
+
+    var body: some View {
+        TextField("Checklist item", text: $text, prompt: Text("Item").foregroundStyle(TG.Colors.ink3))
+            .font(TG.Font.body)
+            .foregroundStyle(item.done ? TG.Colors.ink2 : TG.Colors.ink)
+            .strikethrough(item.done, color: TG.Colors.ink3)
+            .focused(focus, equals: .item(item.id))
+            .submitLabel(.next)
+            .accessibilityLabel("Checklist item")
+            .onChange(of: text) { _, new in if new != item.label { save(new) } }
+            .onSubmit {
+                if text != item.label { save(text) }
+                onSubmit()
+            }
+            // Someone else renamed the line while I'm not editing it.
+            .onChange(of: item.label) { _, new in
+                if focus.wrappedValue != .item(item.id), new != text { text = new }
+            }
     }
 }
 
