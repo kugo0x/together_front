@@ -8,7 +8,7 @@ struct TogetherApp: App {
             if UserDefaults.standard.bool(forKey: "catalog") {
                 ComponentCatalogView()
             } else {
-                RootView()
+                AppRoot()
             }
         }
     }

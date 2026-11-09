@@ -8,7 +8,7 @@ final class HomeUITests: XCTestCase {
     private func launch(_ extra: [String] = []) {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-initialTab", "home", "-initialSpace", "shared", "-noNotifications", "YES"] + extra
+        app.launchArguments = ["-signedIn", "YES", "-initialTab", "home", "-initialSpace", "shared", "-noNotifications", "YES"] + extra
         app.launch()
     }
 
@@ -96,7 +96,7 @@ final class HomeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Shared works best with two"].waitForExistence(timeout: 5))
         tapHittable("Invite")
         XCTAssertTrue(app.staticTexts["Invite your partner"].waitForExistence(timeout: 3))
-        tapHittable("Close")
+        tapHittable("Not now")
 
         app.buttons["Personal"].firstMatch.tap()
         XCTAssertTrue(app.staticTexts["Call Mum"].waitForExistence(timeout: 3))

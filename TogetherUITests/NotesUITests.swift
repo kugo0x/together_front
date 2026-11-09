@@ -9,7 +9,7 @@ final class NotesUITests: XCTestCase {
     private func launch(_ space: String) {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-initialTab", "notes", "-initialSpace", space, "-noNotifications", "YES"]
+        app.launchArguments = ["-signedIn", "YES", "-initialTab", "notes", "-initialSpace", space, "-noNotifications", "YES"]
         app.launch()
     }
 
