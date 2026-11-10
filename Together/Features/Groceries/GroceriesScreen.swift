@@ -14,6 +14,8 @@ struct GroceriesScreen: View {
     @State private var showBought = false
     @State private var editing: GroceryItem?
     @State private var focusQuickAdd = 0
+    @State private var scanning = false
+    @State private var showHistory = false
     @Environment(AppRouter.self) private var router
 
     var body: some View {
@@ -26,6 +28,8 @@ struct GroceriesScreen: View {
         // Home's "Item" quick action: focus the field once this tab is showing.
         .onAppear(perform: takeFocusRequest)
         .onChange(of: router.focusQuickAdd) { takeFocusRequest() }
+        .sheet(isPresented: $scanning) { ScanReceiptSheet() }
+        .navigationDestination(isPresented: $showHistory) { HistoryScreen() }
         .sheet(item: $editing) { item in
             GroceryEditSheet(item: item) { name, qty, note in
                 store.updateItem(item.id, in: space, name: name, qty: qty, note: note)
@@ -42,6 +46,12 @@ struct GroceriesScreen: View {
         let trips = store.recentTrips(in: space)
 
         return ShellList(subtitle: subtitle(toBuy: toBuy.count)) {
+            Section {
+                TGButton("Scan receipt", icon: .camera, variant: .tinted, block: true) { scanning = true }
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
+
             if !suggestions.isEmpty {
                 Section {
                     SuggestionCard(
@@ -75,9 +85,12 @@ struct GroceriesScreen: View {
             }
 
             if !trips.isEmpty {
-                // "History" (the header action in the design) arrives with receipts in phase 8.
-                ShellSection(title: "Recent trips") {
-                    ForEach(trips) { trip in TripRow(trip: trip, me: store.me) }
+                ShellSection(title: "Recent trips", action: "History") { showHistory = true } content: {
+                    ForEach(trips) { trip in
+                        TripRow(trip: trip, me: store.me)
+                            .contentShape(Rectangle())
+                            .onTapGesture { showHistory = true }
+                    }
                 }
             }
         }

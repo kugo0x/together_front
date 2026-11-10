@@ -74,6 +74,8 @@ struct RootView: View {
         .environment(\.selectSpace, SelectSpaceAction { [$space] in $space.wrappedValue = $0 })
         .environment(store)
         .environment(router)
+        .environment(\.receiptRecognizer, receiptRecognizer)
+        .environment(\.receiptTestInput, Self.receiptTestInput)
         .environment(toasts)
     }
 
@@ -90,6 +92,35 @@ struct RootView: View {
     /// Home is titled with the space name; the other tabs keep their own name.
     private func title(for tab: AppTab) -> String {
         tab == .home ? space.displayName : tab.title
+    }
+
+    /// Receipt reading. Until phase 9 wires `APIReceiptRecognizer`, a stand-in answers like the backend would.
+    /// Launch arguments (UI tests and screenshots):
+    /// - `-receiptFixture <name>` picks its answer (`ReceiptFixture.all`: corner, biedronka, mismatch, offline,
+    ///   unreadable, notReceipt, tooLong, busy, limit, disabled); `corner,biedronka` answers each
+    ///   receipt of a queue with the next one;
+    /// - `-receiptDelay <ms>` how long "reading" takes (default 2500).
+    private var receiptRecognizer: ReceiptRecognizer {
+        let defaults = UserDefaults.standard
+        let names = (defaults.string(forKey: "receiptFixture") ?? "corner").split(separator: ",").map(String.init)
+        let delay = defaults.object(forKey: "receiptDelay") != nil ? defaults.integer(forKey: "receiptDelay") : 2500
+        let store = store
+        return FakeReceiptRecognizer(
+            fixtures: names.compactMap { ReceiptFixture.all[$0] },
+            delay: .milliseconds(delay),
+            candidates: { store.receiptCandidates(in: $0) },
+            calendar: store.calendar
+        )
+    }
+
+    /// `-receiptPhotos N` opens the scan sheet with N blank photos instead of the camera (N > 1 asks how they go
+    /// together); `-receiptSeparate YES|NO` answers that question.
+    private static var receiptTestInput: ReceiptTestInput? {
+        let defaults = UserDefaults.standard
+        let count = defaults.integer(forKey: "receiptPhotos")
+        guard count > 0 else { return nil }
+        let separate = defaults.object(forKey: "receiptSeparate") != nil ? defaults.bool(forKey: "receiptSeparate") : nil
+        return .photos(count, separate: separate)
     }
 
     /// `-initialTab groceries` (launch argument) opens a tab directly — for screenshots and UI checks.

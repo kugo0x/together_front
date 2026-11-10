@@ -514,6 +514,72 @@ final class AppStore {
         return item
     }
 
+    // MARK: Receipts — /v1/spaces/{id}/receipts/match, POST /v1/spaces/{id}/receipts
+
+    /// What a receipt can match: the open items, and ticks of the last 24 h (not yet filed into a trip).
+    func receiptCandidates(in space: SpaceKind) -> [ReceiptCandidate] {
+        let since = now.addingTimeInterval(-24 * 3600)
+        let open = toBuy(in: space).map { ReceiptCandidate(itemID: $0.id, name: $0.name) }
+        let recent = bought(in: space)
+            .filter { ($0.boughtAt ?? .distantPast) >= since && !$0.viaReceipt }
+            .map { ReceiptCandidate(itemID: $0.id, name: $0.name, alreadyBought: true) }
+        return open + recent
+    }
+
+    /// Applies a reviewed receipt — nothing changes before this. Included matched lines mark their items bought
+    /// "via receipt" (a tick already there just files into the trip); extras and unclear lines go to history only.
+    /// Returns the saved trip and how many items were newly marked bought.
+    @discardableResult
+    func confirmReceipt(_ review: ReceiptReview, in space: SpaceKind) -> (trip: Trip, bought: Int) {
+        let now = now
+        var bought = 0
+        for line in review.lines where line.included && line.status == .matched {
+            guard let candidate = line.match,
+                  let i = groceryItems.firstIndex(where: { $0.id == candidate.itemID && self.space(of: $0) == space })
+            else { continue }
+            if !groceryItems[i].done {
+                groceryItems[i].done = true
+                groceryItems[i].boughtBy = me
+                groceryItems[i].boughtAt = now
+                bought += 1
+            }
+            groceryItems[i].viaReceipt = true
+        }
+        let included = review.lines.filter(\.included)
+        let trip = Trip(
+            space: space,
+            date: review.date,
+            shoppers: [me],
+            itemCount: included.count,
+            total: review.total,
+            merchant: review.merchant,
+            receiptImageID: "scan-\(UUID().uuidString)",
+            lines: included.map {
+                ReceiptLine(name: $0.name, qty: $0.qty, price: $0.price,
+                            status: ReceiptLine.Status(rawValue: $0.status.rawValue) ?? .extra)
+            }
+        )
+        trips.append(trip)
+        return (trip, bought)
+    }
+
+    /// History: the space's trips by month, newest first — GET /v1/spaces/{id}/trips?month=.
+    func tripMonths(in space: SpaceKind) -> [TripMonth] {
+        let grouped = Dictionary(grouping: trips(in: space)) { trip in
+            let c = calendar.dateComponents([.year, .month], from: trip.date)
+            return TripMonth.Key(year: c.year!, month: c.month!)
+        }
+        return grouped.map { TripMonth(key: $0.key, trips: $0.value.sorted { $0.date > $1.date }) }
+            .sorted { ($0.key.year, $0.key.month) > ($1.key.year, $1.key.month) }
+    }
+
+    /// The month line ("Groceries in November · 352,60 zł") for the month `date` falls in.
+    func monthSummary(containing date: Date, in space: SpaceKind) -> TripMonth {
+        let c = calendar.dateComponents([.year, .month], from: date)
+        let key = TripMonth.Key(year: c.year!, month: c.month!)
+        return tripMonths(in: space).first { $0.key == key } ?? TripMonth(key: key, trips: [])
+    }
+
     // MARK: Shared space membership — /v1/invites/{code}/accept, /v1/spaces/{id}/leave
 
     /// Someone joined my Shared space (or I joined theirs).

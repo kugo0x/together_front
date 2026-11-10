@@ -22,13 +22,16 @@ final class GroceriesUITests: XCTestCase {
     }
 
     /// Scrolls the list until `element` is in the visible part above the QuickAdd bar.
-    private func reveal(_ element: XCUIElement) {
-        XCTAssertTrue(element.waitForExistence(timeout: 5))
+    /// Lists build rows lazily, so it scrolls until the row exists, then until it clears the bar.
+    private func reveal(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
         let list = app.collectionViews.firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertTrue(field.waitForExistence(timeout: 5), file: file, line: line)
         let limit = field.frame.minY - 20
-        for _ in 0..<6 where element.frame.maxY > limit {
+        for _ in 0..<8 where !element.exists || element.frame.maxY > limit {
             list.swipeUp(velocity: .slow)
         }
+        XCTAssertTrue(element.exists, "never scrolled into view", file: file, line: line)
     }
 
     func testQuickAddParsesQuantitiesAndKeepsFocus() {
@@ -46,7 +49,7 @@ final class GroceriesUITests: XCTestCase {
 
     func testCheckingShowsUndoToastAndUndoRestores() {
         let check = app.buttons["Mark bought: Tomatoes"]
-        XCTAssertTrue(check.waitForExistence(timeout: 5))
+        reveal(check)
         check.tap()
 
         let undo = app.buttons["Undo"]
