@@ -23,6 +23,7 @@ struct RootView: View {
             : UserNotificationReminders()
         // On the API the store starts empty and `RemoteSync` fills it; on fakes it starts with the mock data.
         _store = State(initialValue: store ?? AppStore(data: APIConfig.usesFakes ? .make() : .empty, notifier: notifier))
+        if store == nil, !APIConfig.usesFakes { _store.wrappedValue.hasLoaded = false }
         // `-initialSpace shared|personal` (launch argument) sets the starting space once and leaves it switchable —
         // unlike `-activeSpace`, which pins the stored value for the whole run.
         if let initial = UserDefaults.standard.string(forKey: "initialSpace"), SpaceKind(rawValue: initial) != nil {
@@ -48,6 +49,18 @@ struct RootView: View {
             }
         }
         .tint(Accent.of(space).ink)
+        .overlay {
+            if !store.hasLoaded {
+                ZStack {
+                    TG.Colors.bg.ignoresSafeArea()
+                    ProgressView("Loading your spaces…")
+                        .font(TG.Font.subhead)
+                        .foregroundStyle(TG.Colors.ink2)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: store.hasLoaded)
         .safeAreaInset(edge: .top, spacing: 0) {
             if case .offline(let pending) = store.connection {
                 OfflineBanner(pending: pending) { sync?.retryNow() }
@@ -107,8 +120,9 @@ struct RootView: View {
             store.me = me
             store.partner = nil
         }
+        // The view appears in the foreground (`scenePhase` read here can still say "inactive" during launch).
+        sync.setForeground(true)
         await sync.loadAll()
-        sync.setForeground(scenePhase == .active)
         backend.push.start(client: backend.client)
         if let fresh = try? await backend.auth.me() { session.refreshUser(fresh) }
     }

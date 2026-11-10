@@ -30,9 +30,19 @@ struct APILiveTests {
         let user: AuthUser
         var signedOut = false
 
-        init(email: String, password: String) async throws {
+        /// One login per account for the whole run: the API allows 10 sign-ins per email per 15 minutes. Phones of
+        /// the same account share the token pair (it outlives the run; nothing here refreshes it).
+        static var sessions: [String: AuthResult] = [:]
+
+        init(email: String, password: String, fresh: Bool = false) async throws {
             let anonymous = APIClient(baseURL: APILiveTests.baseURL, vault: nil)
-            let result = try await APIAuthService(client: anonymous).login(email: email, password: password)
+            let result: AuthResult
+            if !fresh, let cached = Self.sessions[email] {
+                result = cached
+            } else {
+                result = try await APIAuthService(client: anonymous).login(email: email, password: password)
+                if !fresh { Self.sessions[email] = result }
+            }
             user = result.user
             var box: Phone?
             vault = TokenVault(tokens: result.tokens,
@@ -43,8 +53,9 @@ struct APILiveTests {
             box = self
         }
 
-        static func alex() async throws -> Phone {
-            try await Phone(email: try #require(env["SEED_ALEX_EMAIL"]), password: try #require(env["SEED_ALEX_PASSWORD"]))
+        static func alex(fresh: Bool = false) async throws -> Phone {
+            try await Phone(email: try #require(env["SEED_ALEX_EMAIL"]), password: try #require(env["SEED_ALEX_PASSWORD"]),
+                            fresh: fresh)
         }
 
         static func sam() async throws -> Phone {
@@ -91,7 +102,7 @@ struct APILiveTests {
     /// An expired access token is refreshed once and the call retried; replaying the old refresh token ends the
     /// session.
     @Test func refreshRotatesOnceThenReplayIsRefused() async throws {
-        let alex = try await Phone.alex()
+        let alex = try await Phone.alex(fresh: true) // this test ends its session
         let tokens = try #require(await alex.vault.tokens)
         var stale = tokens
         stale.accessToken = "expired.or.forged.token"

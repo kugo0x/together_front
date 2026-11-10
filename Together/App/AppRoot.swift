@@ -36,6 +36,8 @@ struct AppRoot: View {
         let signedIn = defaults.bool(forKey: "signedIn")
         let testing = signedIn || defaults.bool(forKey: "signedOut")
         let keychain: KeychainStore = testing ? InMemoryKeychain() : SystemKeychain()
+        // `-resetSession YES` (launch argument): start signed out — the integration UI tests.
+        if defaults.bool(forKey: "resetSession") { try? keychain.remove(Session.keychainKey) }
         let box = SessionBox()
         let backend = APIConfig.usesFakes ? nil
             : Backend(tokens: Session.storedTokens(in: keychain), session: { box.session })

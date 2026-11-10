@@ -65,6 +65,9 @@ final class AppStore {
     @ObservationIgnored var applyingServerState = false
     /// What the offline banner shows.
     var connection: ConnectionState = .online
+    /// False until the first load from the server is done (the tabs show a loading state instead of "Nothing to
+    /// buy"); always true on fakes.
+    var hasLoaded = true
     /// Notes whose title/body were merged with the partner's version after a conflict — the editor reloads them
     /// and says so. The value changes with every merge.
     var noteMerges: [Note.ID: Int] = [:]

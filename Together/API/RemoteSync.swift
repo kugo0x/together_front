@@ -34,6 +34,9 @@ final class RemoteSync: StoreSync {
 
     /// The latest load, for whoever waits on it (the receipt recognizer needs space IDs).
     private(set) var loaded = false
+    private var loading = false
+    /// The app is in the foreground: streams are open whenever the spaces are known.
+    private var foreground = false
 
     init(client: APIClient, store: AppStore, toasts: ToastCenter, me: Person, calendar: Calendar = .current) {
         self.client = client
@@ -68,7 +71,15 @@ final class RemoteSync: StoreSync {
     // MARK: Load
 
     /// Everything the app shows, from the server. Called after sign-in, on foreground and after a reconnect.
+    /// A load already running is not started twice.
     func loadAll() async {
+        guard !loading else { return }
+        loading = true
+        defer {
+            loading = false
+            store?.hasLoaded = true // offline too: show what's here (nothing yet) with the banner, not a spinner
+            if foreground { openStreams() }
+        }
         do {
             let me = try await client.send(.get("v1/me"), as: MeDTO.self)
             let settings = try await client.send(.get("v1/me/settings"), as: SettingsDTO.self)
@@ -696,21 +707,27 @@ final class RemoteSync: StoreSync {
 
     // MARK: Realtime
 
-    /// Foreground: one stream per space. Background: none (the server limits open streams).
+    /// Foreground: one stream per space. Background: none (the server limits open streams). Before the first load
+    /// the spaces aren't known yet; the streams open when it finishes.
     func setForeground(_ foreground: Bool) {
+        self.foreground = foreground
         if foreground {
-            for (kind, id) in directory.spaceIDs where streams[kind] == nil {
-                let stream = SpaceEventStream(client: client, spaceID: id) { [weak self] event in
-                    self?.apply(event, in: kind)
-                } reconnected: { [weak self] in
-                    await self?.reload(kind)
-                }
-                streams[kind] = stream
-                stream.start()
-            }
+            openStreams()
         } else {
             for stream in streams.values { stream.stop() }
             streams = [:]
+        }
+    }
+
+    private func openStreams() {
+        for (kind, id) in directory.spaceIDs where streams[kind] == nil {
+            let stream = SpaceEventStream(client: client, spaceID: id) { [weak self] event in
+                self?.apply(event, in: kind)
+            } reconnected: { [weak self] in
+                await self?.reload(kind)
+            }
+            streams[kind] = stream
+            stream.start()
         }
     }
 
