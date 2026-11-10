@@ -7,6 +7,8 @@ struct ReceiptCandidate: Equatable, Hashable, Sendable {
     var name: String
     /// Already ticked — the receipt files that tick into the trip instead of ticking again (`purchase_id`).
     var alreadyBought = false
+    /// The tick to file (from the server's candidate); confirm sends it instead of `item_id`.
+    var purchaseID: UUID?
 }
 
 /// What `POST /v1/spaces/{id}/receipts/scan` answers (back/api/openapi.yaml 0.8.0 `ReceiptScan`): the backend reads

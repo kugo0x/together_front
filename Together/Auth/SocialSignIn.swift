@@ -36,8 +36,8 @@ extension AuthError {
 
 /// Google sign-in, behind a protocol so tests and unconfigured builds don't touch the SDK.
 protocol GoogleSignInProviding: Sendable {
-    /// Shows Google's sheet and returns the ID token for `POST /v1/auth/google`.
-    @MainActor func signIn() async throws -> String
+    /// Shows Google's sheet and returns the ID token and the raw nonce for `POST /v1/auth/google`.
+    @MainActor func signIn() async throws -> (idToken: String, nonce: String)
 }
 
 /// The real GoogleSignIn SDK. Needs `GIDClientID` and the reversed-client-ID URL scheme in Info.plist
@@ -48,16 +48,19 @@ struct GoogleSDKSignIn: GoogleSignInProviding {
     }
 
     @MainActor
-    func signIn() async throws -> String {
+    func signIn() async throws -> (idToken: String, nonce: String) {
         guard Self.isConfigured else { throw AuthError.notConfigured(provider: .google) }
         guard let presenter = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .flatMap(\.windows)
             .first(where: \.isKeyWindow)?.rootViewController else { throw AuthError.network }
+        // The API binds the ID token to a nonce we make (a leaked token can't be replayed).
+        let nonce = AppleNonce.make()
         do {
-            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presenter.topmost)
+            let result = try await GIDSignIn.sharedInstance.signIn(
+                withPresenting: presenter.topmost, hint: nil, additionalScopes: nil, nonce: nonce)
             guard let token = result.user.idToken?.tokenString else { throw AuthError.network }
-            return token
+            return (token, nonce)
         } catch let error as NSError where error.domain == kGIDSignInErrorDomain
                     && error.code == GIDSignInError.canceled.rawValue {
             throw AuthError.cancelled

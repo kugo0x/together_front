@@ -18,21 +18,37 @@ enum Appearance: String, CaseIterable, Identifiable {
 
 /// Switches on the session: welcome / sign in → onboarding (name → share) → the app shell.
 ///
-/// Launch arguments for UI tests and screenshots (they never touch the real Keychain):
-/// `-signedIn YES` starts signed in as Alex; `-signedOut YES` starts at the welcome screen.
+/// Normally the app talks to the API (`APIConfig.baseURL`). Launch arguments for UI tests and screenshots run it on
+/// fakes instead, never touching the real Keychain: `-signedIn YES` starts signed in as Alex; `-signedOut YES` starts
+/// at the welcome screen; `-fakeBackend YES` runs the fakes from the welcome screen with the real Keychain.
 struct AppRoot: View {
     @State private var session: Session
     @State private var toasts = ToastCenter()
     @AppStorage("appearance") private var appearance: Appearance = .system
+    /// The API side; `nil` on fakes.
+    private let backend: Backend?
+
+    @MainActor
+    private final class SessionBox { weak var session: Session? }
 
     init() {
         let defaults = UserDefaults.standard
         let signedIn = defaults.bool(forKey: "signedIn")
         let testing = signedIn || defaults.bool(forKey: "signedOut")
+        let keychain: KeychainStore = testing ? InMemoryKeychain() : SystemKeychain()
+        let box = SessionBox()
+        let backend = APIConfig.usesFakes ? nil
+            : Backend(tokens: Session.storedTokens(in: keychain), session: { box.session })
         let session = Session(
-            service: FakeAuthService(delay: .milliseconds(testing ? 150 : 600)),
-            keychain: testing ? InMemoryKeychain() : SystemKeychain()
+            service: backend?.auth ?? FakeAuthService(delay: .milliseconds(testing ? 150 : 600)),
+            keychain: keychain
         )
+        box.session = session
+        if let backend {
+            session.vault = backend.vault
+            session.willSignOut = { await backend.push.unregister() }
+        }
+        self.backend = backend
         if signedIn {
             session.adopt(AuthResult(
                 user: FakeAuthService.alex,
@@ -58,6 +74,8 @@ struct AppRoot: View {
         }
         .environment(session)
         .environment(toasts)
+        .environment(\.backend, backend)
+        .environment(\.inviteService, backend?.invites ?? FakeInviteService())
         .preferredColorScheme(appearance.colorScheme)
         // Google's sign-in returns to the app through its URL scheme.
         .onOpenURL { GIDSignIn.sharedInstance.handle($0) }

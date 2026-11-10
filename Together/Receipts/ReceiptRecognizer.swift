@@ -102,29 +102,25 @@ enum ReceiptScanError: Error, Equatable, Sendable {
 
 /// `POST /v1/spaces/{spaceID}/receipts/scan` (back/api/openapi.yaml 0.8.0) — multipart, one `image` part per photo,
 /// top of the receipt first. The answer is the reviewed receipt (`ReceiptScan`). A scan takes 10–40 s, so the
-/// timeout is 100 s. Not wired until phase 9.
+/// timeout is 100 s. Goes through the app's `APIClient` (bearer token, refresh, request ID).
 struct APIReceiptRecognizer: ReceiptRecognizer {
-    var baseURL: URL
-    var session: URLSession = .shared
-    /// The server ID of the active Shared / Personal space.
+    let client: APIClient
+    /// The server ID of the Shared / Personal space.
     var spaceID: @Sendable (SpaceKind) async -> UUID?
-    /// A valid access token (refreshed by the caller when needed).
-    var accessToken: @Sendable () async -> String?
 
     func recognize(_ pages: [Data], in space: SpaceKind) async throws -> ScannedReceipt {
         guard (1...ReceiptScanFlow.maxPages).contains(pages.count) else { throw ReceiptScanError.unreadable }
-        guard let id = await spaceID(space), let token = await accessToken() else { throw ReceiptScanError.unavailable }
-        let request = Self.request(baseURL: baseURL, spaceID: id, token: token, pages: pages)
-        let (data, response): (Data, URLResponse)
+        guard let id = await spaceID(space) else { throw ReceiptScanError.unavailable }
+        let data: Data
         do {
-            (data, response) = try await session.data(for: request)
-        } catch let error as URLError where Self.offlineCodes.contains(error.code) {
-            throw ReceiptScanError.offline
-        }
-        guard let http = response as? HTTPURLResponse else { throw ReceiptScanError.unavailable }
-        guard http.statusCode == 200 else {
-            throw Self.error(status: http.statusCode, body: data,
-                             retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap { Int($0) })
+            (data, _) = try await client.raw(Self.request(spaceID: id, pages: pages))
+        } catch let error as APIError {
+            switch error {
+            case .offline: throw ReceiptScanError.offline
+            case .server(let status, _, _, let retryAfter, let body):
+                throw Self.error(status: status, body: body, retryAfter: retryAfter)
+            case .signedOut, .badResponse: throw ReceiptScanError.unavailable
+            }
         }
         do {
             return try Self.decode(data)
@@ -133,18 +129,7 @@ struct APIReceiptRecognizer: ReceiptRecognizer {
         }
     }
 
-    static let offlineCodes: Set<URLError.Code> = [
-        .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost,
-        .cannotFindHost, .dataNotAllowed, .internationalRoamingOff,
-    ]
-
-    static func request(baseURL: URL, spaceID: UUID, token: String, pages: [Data],
-                        boundary: String = UUID().uuidString) -> URLRequest {
-        let url = baseURL.appending(path: "v1/spaces/\(spaceID.uuidString.lowercased())/receipts/scan")
-        var request = URLRequest(url: url, timeoutInterval: 100) // a scan takes 10–40 s
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    static func request(spaceID: UUID, pages: [Data], boundary: String = UUID().uuidString) -> APIRequest {
         var body = Data()
         for (i, page) in pages.enumerated() {
             body.append(Data("--\(boundary)\r\n".utf8))
@@ -154,7 +139,9 @@ struct APIReceiptRecognizer: ReceiptRecognizer {
             body.append(Data("\r\n".utf8))
         }
         body.append(Data("--\(boundary)--\r\n".utf8))
-        request.httpBody = body
+        var request = APIRequest(method: "POST", path: "v1/spaces/\(spaceID.uuidString.lowercased())/receipts/scan",
+                                 body: body, contentType: "multipart/form-data; boundary=\(boundary)")
+        request.timeout = 100 // a scan takes 10–40 s
         return request
     }
 
@@ -221,7 +208,8 @@ struct APIReceiptRecognizer: ReceiptRecognizer {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let r = try decoder.decode(Response.self, from: data)
         func candidate(_ c: Response.Candidate?) -> ReceiptCandidate? {
-            c.map { ReceiptCandidate(itemID: $0.itemId, name: $0.name, alreadyBought: $0.purchaseId != nil) }
+            c.map { ReceiptCandidate(itemID: $0.itemId, name: $0.name, alreadyBought: $0.purchaseId != nil,
+                                     purchaseID: $0.purchaseId) }
         }
         func money(_ grosze: Int?) -> Decimal? { grosze.map(Money.decimal(grosze:)) }
         return ScannedReceipt(

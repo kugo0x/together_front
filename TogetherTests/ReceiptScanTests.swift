@@ -93,14 +93,13 @@ struct ReceiptAPITests {
 
     @Test func requestShape() throws {
         let top = Data([0xFF, 0xD8, 0x01, 0xFF, 0xD9]), bottom = Data([0xFF, 0xD8, 0x02, 0xFF, 0xD9])
-        let request = APIReceiptRecognizer.request(baseURL: URL(string: "https://api.together.app")!, spaceID: space,
-                                                   token: "tok", pages: [top, bottom], boundary: "B")
-        #expect(request.httpMethod == "POST")
-        #expect(request.url?.absoluteString == "https://api.together.app/v1/spaces/6c8d3d7e-0000-4000-8000-0000000000aa/receipts/scan")
-        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tok")
-        #expect(request.value(forHTTPHeaderField: "Content-Type") == "multipart/form-data; boundary=B")
-        #expect(request.timeoutInterval >= 100, "a scan takes 10–40 s")
-        let body = try #require(request.httpBody)
+        let request = APIReceiptRecognizer.request(spaceID: space, pages: [top, bottom], boundary: "B")
+        #expect(request.method == "POST")
+        #expect(request.path == "v1/spaces/6c8d3d7e-0000-4000-8000-0000000000aa/receipts/scan")
+        #expect(request.authenticated, "the client adds the bearer token")
+        #expect(request.contentType == "multipart/form-data; boundary=B")
+        #expect(request.timeout >= 100, "a scan takes 10–40 s")
+        let body = try #require(request.body)
         let text = String(decoding: body, as: UTF8.self)
         #expect(text.hasPrefix("--B\r\nContent-Disposition: form-data; name=\"image\"; filename=\"part-1.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"))
         #expect(text.contains("\r\n--B\r\nContent-Disposition: form-data; name=\"image\"; filename=\"part-2.jpg\"\r\n"))
@@ -112,8 +111,8 @@ struct ReceiptAPITests {
     }
 
     @Test func onlyOneToFivePagesAreSent() async {
-        let api = APIReceiptRecognizer(baseURL: URL(string: "https://api.together.app")!, spaceID: { _ in nil },
-                                       accessToken: { nil })
+        let api = APIReceiptRecognizer(client: APIClient(baseURL: URL(string: "https://api.together.app")!, vault: nil),
+                                       spaceID: { _ in nil })
         await #expect(throws: ReceiptScanError.unreadable) { try await api.recognize([], in: .shared) }
         await #expect(throws: ReceiptScanError.unreadable) {
             try await api.recognize(Array(repeating: Data(), count: 6), in: .shared)
@@ -183,7 +182,7 @@ struct ReceiptAPITests {
 
         let bread = r.lines[3]
         #expect(bread.unclear && bread.confidence == .low && bread.status == .unclear)
-        #expect(bread.didYouMean == ReceiptCandidate(itemID: breadID, name: "Chleb", alreadyBought: true))
+        #expect(bread.didYouMean == ReceiptCandidate(itemID: breadID, name: "Chleb", alreadyBought: true, purchaseID: purchase))
         #expect(bread.quantityText == nil)
     }
 
@@ -239,8 +238,8 @@ struct ReceiptAPITests {
     }
 
     @Test func offlineErrorsAreRecognised() {
-        #expect(APIReceiptRecognizer.offlineCodes.contains(.notConnectedToInternet))
-        #expect(APIReceiptRecognizer.offlineCodes.contains(.timedOut))
+        #expect(APIError.offlineCodes.contains(.notConnectedToInternet))
+        #expect(APIError.offlineCodes.contains(.timedOut))
     }
 
     @Test func standInThrowsTheFixturesError() async {
