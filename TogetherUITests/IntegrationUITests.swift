@@ -15,15 +15,23 @@ final class IntegrationUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    private func launch(reset: Bool, url: String? = nil) {
+    private func launch(reset: Bool, url: String? = nil, extra: [String] = []) {
         app = XCUIApplication()
         app.launchArguments = ["-apiBaseURL", url ?? baseURL, "-noNotifications", "YES",
-                               "-initialSpace", "shared", "-initialTab", "groceries"]
+                               "-initialSpace", "shared", "-initialTab", "groceries"] + extra
         if reset { app.launchArguments += ["-resetSession", "YES"] }
         app.launch()
     }
 
     private var field: XCUIElement { app.textFields["Add to Shared groceries"] }
+
+    /// A screenshot kept in the result bundle (light / dark / XXL runs compare the new states).
+    private func shot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 
     /// Scrolls the list until `element` exists.
     private func reveal(_ element: XCUIElement) -> Bool {
@@ -42,10 +50,11 @@ final class IntegrationUITests: XCTestCase {
     nonisolated(unsafe) private static var signedIn = false
 
     /// Welcome → "I already have an account" → email + password → the Groceries tab.
-    private func signInAsAlex(file: StaticString = #filePath, line: UInt = #line) throws {
+    private func signInAsAlex(extra: [String] = [], file: StaticString = #filePath, line: UInt = #line) throws {
         if Self.signedIn {
-            launch(reset: false)
+            launch(reset: false, extra: extra)
             XCTAssertTrue(text("Shared with Sam").waitForExistence(timeout: 30), "session restored", file: file, line: line)
+            waitForLoad()
             return
         }
         let email = try XCTUnwrap(env["SEED_ALEX_EMAIL"]), password = try XCTUnwrap(env["SEED_ALEX_PASSWORD"])
@@ -62,20 +71,27 @@ final class IntegrationUITests: XCTestCase {
         passwordField.typeText(password)
         app.buttons["authSubmit"].tap()
         XCTAssertTrue(text("Shared with Sam").waitForExistence(timeout: 40), "signed in, Shared loaded", file: file, line: line)
+        waitForLoad()
         Self.signedIn = true
         dismissSavePassword()
+    }
+
+    /// The first load covers the tabs ("Loading your spaces…"); taps go nowhere until it's done.
+    private func waitForLoad() {
+        _ = app.staticTexts["Loading your spaces…"].waitForNonExistence(timeout: 30)
     }
 
     /// iOS offers to save the password after a real sign-in; it would take the keyboard focus.
     private func dismissSavePassword() {
         let notNow = app.buttons["Not Now"]
-        if notNow.waitForExistence(timeout: 3) { notNow.tap() }
+        if notNow.waitForExistence(timeout: 8) { notNow.tap() }
     }
 
     // MARK: Checklist
 
     /// Sign in → the seeded Shared world: list, suggestions, partner.
-    func testSignInShowsTheSharedWorld() async throws {
+    /// Runs first (`test0…`): later tests change the seeded list (a receipt ticks Oat milk).
+    func test0SignInShowsTheSharedWorld() async throws {
         try signInAsAlex()
         XCTAssertTrue(reveal(app.buttons["Mark bought: Oat milk"]), "seeded item (rows below the fold aren't built until scrolled)")
         app.collectionViews.firstMatch.swipeDown()
@@ -92,6 +108,63 @@ final class IntegrationUITests: XCTestCase {
         app.buttons["Personal"].firstMatch.tap()
         XCTAssertTrue(text("Only you can see this list").waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Mark bought: Oat milk"].exists, "Shared items don't show in Personal")
+    }
+
+    /// Alex edits a Shared note while Sam saves a new title: Alex's save conflicts (409), is merged (Sam's title,
+    /// Alex's text) and the editor says so.
+    func testNoteConflictShowsMergeNotice() async throws {
+        try signInAsAlex()
+        let notesTab = app.tabBars.buttons["Notes"]
+        for _ in 0..<3 where !notesTab.isSelected {
+            notesTab.tap()
+            _ = notesTab.waitForExistence(timeout: 1)
+        }
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Weekend in Gda")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let body = app.textViews["Note"].exists ? app.textViews["Note"] : app.textFields["Note"]
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+
+        let sam = try await SamsPhone(baseURL: baseURL, env: env)
+        try await sam.renameNote(titled: "Weekend in Gdańsk", to: "Weekend in Gdańsk 🚆")
+
+        body.tap()
+        body.typeText(" Bring the charger.")
+        XCTAssertTrue(text("edited this note at the same time").waitForExistence(timeout: 10), "merge notice")
+        XCTAssertEqual(app.textFields["Title"].value as? String, "Weekend in Gdańsk 🚆", "their title")
+        XCTAssertTrue((body.value as? String)?.contains("Bring the charger.") == true, "my text")
+        shot("note-merged")
+        app.buttons["OK"].tap()
+        XCTAssertFalse(text("edited this note at the same time").exists)
+    }
+
+    /// Scan → the server reads it (the stack's demo recognizer: Corner Market) → review → confirm → the trip is in
+    /// History with its total.
+    func testReceiptScanToHistory() throws {
+        try signInAsAlex()
+        app.terminate()
+        launch(reset: false, extra: ["-receiptPhotos", "1"]) // a blank photo instead of the camera
+        XCTAssertTrue(text("Shared with Sam").waitForExistence(timeout: 30))
+        waitForLoad()
+        app.buttons["Scan receipt"].firstMatch.tap()
+        let read = app.buttons["Read receipt"]
+        XCTAssertTrue(read.waitForExistence(timeout: 10))
+        read.tap()
+        XCTAssertTrue(app.staticTexts["Review receipt"].waitForExistence(timeout: 30), "the server read it")
+        XCTAssertTrue(text("Corner Market").exists)
+        shot("receipt-review")
+        let confirm = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label == %@", "Mark ", "Save to history")).firstMatch
+        XCTAssertTrue(confirm.exists)
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 10))
+        app.buttons["Done"].tap()
+        let history = app.buttons["History"]
+        for _ in 0..<8 where !(history.exists && history.isHittable) { app.collectionViews.firstMatch.swipeUp() }
+        history.tap()
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))
+        XCTAssertTrue(text("Groceries in").exists, "month line")
+        XCTAssertTrue(text("Corner Market").waitForExistence(timeout: 5), "the trip, from the server")
+        shot("history")
     }
 
     /// A new account: sign up → name → "Invite your partner" → share the code; a second new account joins with it
@@ -190,6 +263,7 @@ final class IntegrationUITests: XCTestCase {
         field.typeText("\(name)\n")
         XCTAssertTrue(app.buttons["Mark bought: \(name)"].waitForExistence(timeout: 5), "on the list at once")
         XCTAssertTrue(text("1 change will sync").waitForExistence(timeout: 5))
+        shot("offline-banner")
         app.terminate()
 
         launch(reset: false)
@@ -263,6 +337,15 @@ private struct SamsPhone {
         throw XCTSkip("\(name) never reached the server")
     }
 
+    /// PATCH with the note's current version, like another phone saving.
+    func renameNote(titled title: String, to newTitle: String) async throws {
+        let notes = try await Self.call("GET", baseURL + "/v1/spaces/\(spaceID)/notes", token: token)
+        let note = try XCTUnwrap((notes["notes"] as? [[String: Any]])?.first { ($0["title"] as? String) == title })
+        let id = try XCTUnwrap(note["id"] as? String), version = try XCTUnwrap(note["version"] as? Int)
+        _ = try await Self.call("PATCH", baseURL + "/v1/spaces/\(spaceID)/notes/\(id)", token: token,
+                                body: ["title": newTitle, "body": note["body"] as? String ?? ""], ifMatch: "\"\(version)\"")
+    }
+
     func markBought(_ id: String) async throws {
         _ = try await Self.call("POST", baseURL + "/v1/spaces/\(spaceID)/items/\(id)/bought", token: token)
     }
@@ -271,9 +354,11 @@ private struct SamsPhone {
         _ = try await Self.call("DELETE", baseURL + "/v1/spaces/\(spaceID)/items/\(id)", token: token)
     }
 
-    static func call(_ method: String, _ url: String, token: String?, body: [String: Any]? = nil) async throws -> [String: Any] {
+    static func call(_ method: String, _ url: String, token: String?, body: [String: Any]? = nil,
+                     ifMatch: String? = nil) async throws -> [String: Any] {
         var request = URLRequest(url: URL(string: url)!)
         request.httpMethod = method
+        if let ifMatch { request.setValue(ifMatch, forHTTPHeaderField: "If-Match") }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)

@@ -287,6 +287,7 @@ struct NoteEditor: View {
             base = (current.title, current.body, current.version)
             title = mergedTitle
             text = mergedBody
+            showMerged = true // the partner's save arrived (event stream) while I was typing
             if retry { save(retry: false) }
         case nil:
             break

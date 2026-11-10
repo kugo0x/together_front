@@ -194,6 +194,9 @@ struct ReceiptAPITests {
         #expect(review.lines[0].detail == "MLEKO OWS 1L · 2 × 4,99")
         #expect(review.lines[2].detail == "JOG.GRECKI 400G · 2 × 3,79 · rabat −1,00")
         #expect(review.lines[3].detail == nil, "raw = name: shown once")
+        var printedQty = review.lines[0]
+        printedQty.raw = "MLEKO OWSIANE 1L 2 x 4,99"
+        #expect(printedQty.detail == "MLEKO OWSIANE 1L 2 x 4,99", "the printed quantity isn't repeated")
         #expect(review.total == Decimal(string: "36.05"))
         #expect(review.linesDontAddUp)
         // The person finds the misread price: the note goes away.
