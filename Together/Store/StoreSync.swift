@@ -5,6 +5,8 @@ import Foundation
 @MainActor
 protocol StoreSync: AnyObject {
     func record(_ change: StoreChange)
+    /// A trip's receipt lines, fetched when it is opened in History.
+    func loadLines(of tripID: Trip.ID) async
 }
 
 /// A local change, in the store's words. The API call for each lives in `RemoteSync`.

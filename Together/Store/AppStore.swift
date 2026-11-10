@@ -626,6 +626,12 @@ final class AppStore {
         return (trip, bought)
     }
 
+    /// The receipt lines of a trip from the server (History lists trips without them); nothing to do offline.
+    func loadLines(of tripID: Trip.ID) async {
+        guard let trip = trips.first(where: { $0.id == tripID }), trip.lines.isEmpty, trip.hasReceipt else { return }
+        await sync?.loadLines(of: tripID)
+    }
+
     /// History: the space's trips by month, newest first — GET /v1/spaces/{id}/trips?month=.
     func tripMonths(in space: SpaceKind) -> [TripMonth] {
         let grouped = Dictionary(grouping: trips(in: space)) { trip in

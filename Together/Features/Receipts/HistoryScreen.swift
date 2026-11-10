@@ -85,8 +85,15 @@ struct HistoryScreen: View {
 
 /// One trip: where, when, the total, and the lines from its receipt.
 struct TripDetail: View {
-    let trip: Trip
+    /// The row that was tapped; the live version (with its lines, once loaded) comes from the store.
+    let tapped: Trip
     @Environment(AppStore.self) private var store
+    /// The receipt lines are fetched when the trip is opened (`GET /trips/{id}`); until then the empty state waits.
+    @State private var linesLoaded = false
+
+    init(trip: Trip) { tapped = trip }
+
+    private var trip: Trip { store.trips.first { $0.id == tapped.id } ?? tapped }
 
     var body: some View {
         List {
@@ -103,7 +110,11 @@ struct TripDetail: View {
             }
             .tgListRow()
 
-            if trip.lines.isEmpty {
+            if trip.lines.isEmpty, !linesLoaded {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+            } else if trip.lines.isEmpty {
                 Text(trip.hasReceipt ? "This receipt’s lines weren’t kept." : "No receipt for this trip.")
                     .font(TG.Font.subhead)
                     .foregroundStyle(TG.Colors.ink2)
@@ -125,6 +136,10 @@ struct TripDetail: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(TG.Colors.bg)
+        .task {
+            await store.loadLines(of: tapped.id)
+            linesLoaded = true
+        }
         .navigationTitle(trip.merchant ?? "Trip")
         .navigationBarTitleDisplayMode(.inline)
     }

@@ -56,6 +56,15 @@ final class RemoteSync: StoreSync {
 
     func spaceID(_ kind: SpaceKind) -> UUID? { directory.spaceIDs[kind] }
 
+    /// Changes not yet accepted by the server.
+    var pendingCount: Int { queue.count }
+
+    /// Nothing waiting and nothing in flight (tests wait for this).
+    var isIdle: Bool { queue.isEmpty && !draining }
+
+    /// The server's ID for something created here.
+    func serverID(for localID: UUID) -> UUID { id(localID) }
+
     // MARK: Load
 
     /// Everything the app shows, from the server. Called after sign-in, on foreground and after a reconnect.
@@ -545,6 +554,17 @@ final class RemoteSync: StoreSync {
         if let kind { await reload(kind) } else { await loadAll() }
     }
 
+    func loadLines(of tripID: Trip.ID) async {
+        guard let store, let trip = store.trips.first(where: { $0.id == tripID }), let s = directory.spaceIDs[trip.space],
+              let dto = try? await client.send(.get("v1/spaces/\(s)/trips/\(id(tripID))"), as: TripDTO.self) else { return }
+        store.applyingServer {
+            guard let i = store.trips.firstIndex(where: { $0.id == tripID }) else { return }
+            var full = APIMapping.trip(dto, space: trip.space, directory)
+            full.id = tripID
+            store.trips[i] = full
+        }
+    }
+
     // MARK: Server state into the store
 
     /// Puts the server's version of something created or changed here in place of the local one.
@@ -799,10 +819,9 @@ private struct Snapshot {
             let page = try await client.send(.get("v1/spaces/\(s)/trips", query: [
                 URLQueryItem(name: "month", value: month), URLQueryItem(name: "tz", value: zone),
             ]), as: TripsPageDTO.self)
+            // Without lines: a trip's lines are fetched when it is opened (`RemoteSync.loadLines`).
             for trip in page.trips where !collected.contains(where: { $0.id == trip.id }) {
-                // History rows open the trip's lines; the month list doesn't include them.
-                let full = (try? await client.send(.get("v1/spaces/\(s)/trips/\(trip.id)"), as: TripDTO.self)) ?? trip
-                collected.append(APIMapping.trip(full, space: kind, dir))
+                collected.append(APIMapping.trip(trip, space: kind, dir))
             }
         }
         trips[kind] = collected
