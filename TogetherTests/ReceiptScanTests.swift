@@ -60,19 +60,6 @@ struct ReceiptImageTests {
         let p = try properties(ReceiptImage.jpeg(from: cameraPhoto(width: 600, height: 900)))
         #expect(p[kCGImagePropertyPixelHeight] as? Int == 900)
     }
-
-    @Test func pagesAreStitchedTopToBottom() throws {
-        func page(_ height: Int) throws -> CGImage {
-            let c = try #require(CGContext(data: nil, width: 800, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                           space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                           bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
-            return try #require(c.makeImage())
-        }
-        let stitched = try ReceiptImage.stitch([page(1200), page(900)])
-        #expect(stitched.width == 800 && stitched.height == 2100)
-        let p = try properties(ReceiptImage.jpeg(from: stitched))
-        #expect(p[kCGImagePropertyPixelHeight] as? Int == ReceiptImage.maxLongSide)
-    }
 }
 
 struct ReceiptAPITests {

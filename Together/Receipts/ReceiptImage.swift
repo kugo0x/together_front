@@ -34,29 +34,6 @@ enum ReceiptImage {
         return try jpeg(from: image)
     }
 
-    /// A long receipt scanned as several pages becomes one tall image, top to bottom.
-    static func stitch(_ pages: [CGImage]) throws -> CGImage {
-        guard pages.count > 1 else {
-            guard let page = pages.first else { throw Failure.unreadable }
-            return page
-        }
-        let width = pages.map(\.width).max() ?? 0
-        let height = pages.reduce(0) { $0 + $1.height }
-        guard let context = CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-        ) else { throw Failure.unreadable }
-        context.setFillColor(CGColor(gray: 1, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        var top = height
-        for page in pages {
-            top -= page.height
-            context.draw(page, in: CGRect(x: 0, y: top, width: page.width, height: page.height))
-        }
-        guard let image = context.makeImage() else { throw Failure.unreadable }
-        return image
-    }
-
     private static func downscale(_ image: CGImage) throws -> CGImage {
         let long = max(image.width, image.height)
         guard long > maxLongSide else { return image }
