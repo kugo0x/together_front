@@ -7,7 +7,12 @@ struct ReceiptReview: Equatable, Sendable {
     struct Line: Identifiable, Equatable, Sendable {
         var id = UUID()
         var name: String
+        /// As printed, when it differs from the clean name ("MLEKO OWS 1L").
+        var raw: String?
+        /// "2 × 4,99", "1,020 kg × 9,00".
         var qty: String?
+        /// Rabat already taken off `price`.
+        var discount: Decimal = 0
         var price: Decimal?
         var status: ReceiptLineStatus
         /// Matched: the list item it ticks.
@@ -16,6 +21,12 @@ struct ReceiptReview: Equatable, Sendable {
         var didYouMean: ReceiptCandidate?
         /// Unticked lines (a colleague's coffee) are left out of everything.
         var included = true
+
+        /// Under the name: "MLEKO OWS 1L · 2 × 3,79 · rabat −1,00".
+        var detail: String? {
+            let parts = [raw, qty, discount > 0 ? "rabat −" + Money.number(discount) : nil].compactMap { $0 }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
     }
 
     var merchant: String?
@@ -25,15 +36,37 @@ struct ReceiptReview: Equatable, Sendable {
     var total: Decimal?
     /// The list items a line can be pointed at by hand ("Choose from your list").
     var candidates: [ReceiptCandidate]
+    /// "SUMA PLN" as printed, and whether the server found the lines add up to it.
+    let printedTotal: Decimal?
+    let serverSaysTotalMatches: Bool?
 
-    init(scanned: ScannedReceipt, candidates: [ReceiptCandidate], now: Date) {
+    /// - Parameter now: the receipt's date when it wasn't printed or is today; another printed day keeps its date.
+    init(scanned: ScannedReceipt, candidates: [ReceiptCandidate], now: Date, calendar: Calendar = .current) {
         lines = scanned.lines.map {
-            Line(name: $0.name, qty: $0.qty, price: $0.price, status: $0.status, match: $0.match, didYouMean: $0.didYouMean)
+            Line(name: $0.name, raw: $0.raw.caseInsensitiveCompare($0.name) == .orderedSame ? nil : $0.raw,
+                 qty: $0.quantityText, discount: $0.discount, price: $0.price, status: $0.status,
+                 match: $0.match, didYouMean: $0.didYouMean)
         }
         merchant = scanned.merchant
-        date = scanned.shoppedAt ?? now
+        date = Self.date(scanned.purchasedOn, now: now, calendar: calendar)
         self.candidates = candidates
+        printedTotal = scanned.total
+        serverSaysTotalMatches = scanned.totalMatches
         total = scanned.total ?? (lines.contains { $0.price == nil } ? nil : lines.compactMap(\.price).reduce(0, +))
+    }
+
+    /// The lines don't add up to "SUMA PLN" (server: `total_matches: false`) and no price has been fixed to make
+    /// them — "check the prices".
+    var linesDontAddUp: Bool {
+        guard serverSaysTotalMatches == false, let printedTotal else { return false }
+        return lines.compactMap(\.price).reduce(0, +) != printedTotal
+    }
+
+    /// A printed day other than today becomes that day at noon (the receipt has no time we trust).
+    private static func date(_ day: DateComponents?, now: Date, calendar: Calendar) -> Date {
+        guard let day, let start = calendar.date(from: DateComponents(year: day.year, month: day.month, day: day.day)),
+              !calendar.isDate(start, inSameDayAs: now), start < now else { return now }
+        return calendar.date(byAdding: .hour, value: 12, to: start) ?? start
     }
 
     var matched: [Line] { lines.filter { $0.status == .matched } }

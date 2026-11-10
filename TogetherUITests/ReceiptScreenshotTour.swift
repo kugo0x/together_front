@@ -69,4 +69,28 @@ final class ReceiptScreenshotTour: XCTestCase {
         _ = app.staticTexts["You’re offline"].waitForExistence(timeout: 6)
         shot("8-offline")
     }
+
+    func testMismatchAndErrors() {
+        launch(["-receiptPhotos", "1", "-receiptFixture", "mismatch", "-receiptDelay", "1000"])
+        tap("Scan receipt")
+        tap("Read receipt")
+        _ = app.staticTexts["Review receipt"].waitForExistence(timeout: 6)
+        let chips = app.buttons["Choose from your list"]
+        for _ in 0..<6 where !(chips.exists && chips.isHittable) { app.swipeUp() }
+        shot("9-mismatch")
+        for _ in 0..<6 { app.swipeUp() }
+        shot("9b-total")
+        app.terminate()
+        launch(["-receiptPhotos", "1", "-receiptFixture", "tooLong", "-receiptDelay", "1000"])
+        tap("Scan receipt")
+        tap("Read receipt")
+        _ = app.buttons["Scan in parts"].waitForExistence(timeout: 6)
+        shot("10-too-long")
+        app.terminate()
+        launch(["-receiptPhotos", "1", "-receiptFixture", "limit", "-receiptDelay", "1000"])
+        tap("Scan receipt")
+        tap("Read receipt")
+        _ = app.staticTexts["That’s all the scans for today"].waitForExistence(timeout: 6)
+        shot("11-limit")
+    }
 }

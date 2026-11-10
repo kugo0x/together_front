@@ -17,7 +17,7 @@ struct FlowLayout: Layout {
         for row in arrange(width: bounds.width, subviews: subviews) {
             var x = bounds.minX
             for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
+                let size = Self.size(of: subviews[index], fitting: bounds.width)
                 subviews[index].place(
                     at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
                     proposal: ProposedViewSize(size)
@@ -28,13 +28,21 @@ struct FlowLayout: Layout {
         }
     }
 
+    /// Its ideal size, or — when that is wider than the row (a long chip at large text) — the row's width, so the
+    /// child wraps its own text instead of pushing the whole layout off screen.
+    private static func size(of subview: LayoutSubview, fitting width: CGFloat) -> CGSize {
+        let ideal = subview.sizeThatFits(.unspecified)
+        guard ideal.width > width, width.isFinite else { return ideal }
+        return subview.sizeThatFits(ProposedViewSize(width: width, height: nil))
+    }
+
     private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
 
     private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
         var rows: [Row] = []
         var current = Row()
         for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
+            let size = Self.size(of: subview, fitting: width)
             let needed = current.indices.isEmpty ? size.width : current.width + spacing + size.width
             if needed > width, !current.indices.isEmpty {
                 rows.append(current)

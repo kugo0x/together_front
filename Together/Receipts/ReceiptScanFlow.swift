@@ -219,7 +219,7 @@ final class ReceiptScanFlow {
                 state = scanned.lines.isEmpty
                     ? .failed(.unreadable)
                     : .ready(ReceiptReview(scanned: scanned, candidates: self.store.receiptCandidates(in: space),
-                                           now: self.store.now))
+                                           now: self.store.now, calendar: self.store.calendar))
             } catch let error as ReceiptScanError {
                 state = .failed(error)
             } catch {

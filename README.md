@@ -29,17 +29,18 @@ welcome screen), `-initialTab home|groceries|tasks|notes`, `-initialSpace shared
 
 Receipts (no camera in the simulator): `-receiptPhotos N` opens Scan receipt with N blank photos (N > 1 asks
 "parts of one receipt" vs "separate receipts"), `-receiptSeparate YES|NO` answers that question,
-`-receiptFixture corner|biedronka|offline|unreadable` picks what the stand-in recognizer answers (`corner,biedronka`
+`-receiptFixture <name>` picks what the stand-in recognizer answers (corner, biedronka, mismatch, offline, unreadable,
+notReceipt, tooLong, busy, limit, disabled) (`corner,biedronka`
 answers each receipt of a queue with the next one), `-receiptDelay <ms>` sets how long "reading" takes (default 2500).
 
 ## Receipts
 
 Recognition happens on the backend (`POST /v1/spaces/{id}/receipts/scan`, Claude API — the key never ships in the
-app). The app only prepares the photos (`ReceiptImage`: JPEG, long side ≤ 1568 px, no metadata), sends 1–5 photos
+app). The app only prepares the photos (`ReceiptImage`: JPEG, long side ≤ 2576 px and ≤ 3.75 MP, ≤ 3.8 MB each, no metadata), sends 1–5 photos
 of one receipt per call (`ReceiptRecognizer`) and shows the server's matching for review; nothing changes until
 Confirm. Several different receipts are a queue (`ReceiptScanFlow`): read in parallel, reviewed one by one, a trip
-each. Until phase 9 a fixture-backed `FakeReceiptRecognizer` is active; `APIReceiptRecognizer` follows the expected
-request/response and must be aligned with the backend spec.
+each. Until phase 9 a fixture-backed `FakeReceiptRecognizer` is active; `APIReceiptRecognizer` follows the backend spec
+(back `api/openapi.yaml` 0.8.0, `docs/receipt-scan.md`).
 
 ## Layout
 

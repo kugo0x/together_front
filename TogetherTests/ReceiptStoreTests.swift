@@ -25,9 +25,9 @@ struct ReceiptStoreTests {
     func review(_ fixture: ReceiptFixture, _ store: AppStore, in space: SpaceKind = .shared) async throws -> ReceiptReview {
         let now = Self.now
         let recognizer = FakeReceiptRecognizer(fixture: fixture, delay: .zero, candidates: { store.receiptCandidates(in: $0) },
-                                               now: { now })
+                                               now: { now }, calendar: warsaw)
         let scanned = try await recognizer.recognize([Data()], in: space)
-        return ReceiptReview(scanned: scanned, candidates: store.receiptCandidates(in: space), now: now)
+        return ReceiptReview(scanned: scanned, candidates: store.receiptCandidates(in: space), now: now, calendar: warsaw)
     }
 
     // MARK: Review
@@ -35,21 +35,21 @@ struct ReceiptStoreTests {
     @Test func reviewShowsTheServersMatching() async throws {
         let r = try await review(.biedronka, storeWithPolishList())
         #expect(Set(r.matched.compactMap(\.match?.name)) == ["Mleko owsiane", "Pomidory", "Chleb", "Szpinak", "Banany"])
-        #expect(Set(r.extra.map(\.name)) == ["CZEKOLADA GORZKA", "WODA GAZOWANA 1,5L"])
-        #expect(r.unclear.map(\.name) == ["JOGURT GRECKI 400G", "***"])
+        #expect(Set(r.extra.map(\.name)) == ["Czekolada gorzka", "Woda gazowana 1,5 l"])
+        #expect(r.unclear.map(\.name) == ["Jogurt grecki 400 g", "***"])
         #expect(r.unclear.first?.didYouMean?.name == "Greek yogurt")
         #expect(r.merchant == "Biedronka")
-        #expect(r.date == Self.now.addingTimeInterval(-20 * 60))
+        #expect(r.date == Self.now, "printed today")
         #expect(r.total == Decimal(string: "71.91"))
         #expect(r.confirmTitle == "Mark 5 as bought")
     }
 
     @Test func totalFallsBackToTheLinesWhenUnread() {
-        let scanned = ScannedReceipt(merchant: nil, shoppedAt: nil, total: nil, lines: [
-            .init(name: "A", price: 2, status: .extra), .init(name: "B", price: Decimal(string: "3.5"), status: .extra),
+        let scanned = ScannedReceipt(merchant: nil, total: nil, lines: [
+            .init(raw: "A", name: "A", price: 2, status: .extra), .init(raw: "B", name: "B", price: Decimal(string: "3.5"), status: .extra),
         ])
         #expect(ReceiptReview(scanned: scanned, candidates: [], now: Self.now).total == Decimal(string: "5.5"))
-        let unreadable = ScannedReceipt(merchant: nil, shoppedAt: nil, total: nil, lines: [.init(name: "A", status: .unclear)])
+        let unreadable = ScannedReceipt(merchant: nil, total: nil, lines: [.init(raw: "A", name: "A", status: .unclear)])
         #expect(ReceiptReview(scanned: unreadable, candidates: [], now: Self.now).total == nil)
     }
 
@@ -82,7 +82,7 @@ struct ReceiptStoreTests {
             #expect(item.boughtAt == Self.now)
         }
         // Extras go to history only — never onto the list.
-        #expect(!store.groceries(in: .shared).contains { $0.name.uppercased().hasPrefix("CZEKOLADA") })
+        #expect(!store.groceries(in: .shared).contains { $0.name.hasPrefix("Czekolada") })
 
         let trip = result.trip
         #expect(store.trips(in: .shared).first == trip)
@@ -98,7 +98,7 @@ struct ReceiptStoreTests {
         let store = storeWithPolishList()
         var r = try await review(.biedronka, store)
         let milk = try #require(r.matched.first { $0.match?.name == "Mleko owsiane" })
-        let water = try #require(r.extra.first { $0.name.hasPrefix("WODA") })
+        let water = try #require(r.extra.first { $0.name.hasPrefix("Woda") })
         r.toggle(milk.id)
         r.toggle(water.id)
         #expect(r.confirmTitle == "Mark 4 as bought")
@@ -106,7 +106,7 @@ struct ReceiptStoreTests {
         #expect(result.bought == 4)
         #expect(store.toBuy(in: .shared).contains { $0.name == "Mleko owsiane" })
         #expect(result.trip.itemCount == 7)
-        #expect(!result.trip.lines.contains { $0.name.hasPrefix("WODA") })
+        #expect(!result.trip.lines.contains { $0.name.hasPrefix("Woda") })
     }
 
     @Test func didYouMeanAndChoosingFromTheList() async throws {

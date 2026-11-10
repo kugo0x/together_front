@@ -418,8 +418,10 @@ struct ScanReceiptSheet: View {
                 TGButton("Try again", block: true) { flow.retryCurrent() }
             }
             if flow.isQueue {
-                TGButton("Skip this receipt", variant: .secondary, block: true) { flow.skipCurrent() }
-            } else {
+                TGButton("Skip this receipt", variant: error.canRetry ? .secondary : .primary, block: true) { flow.skipCurrent() }
+            } else if error == .tooLong, !flow.pages.isEmpty {
+                TGButton("Scan in parts", icon: .camera, block: true) { flow.cancelReading() }
+            } else if error.canUseAnotherPhoto {
                 TGButton(error.canRetry ? "Use another photo" : "Try another photo",
                          variant: error.canRetry ? .secondary : .primary, block: true) { flow.startOver() }
             }
@@ -533,7 +535,7 @@ struct ScanReceiptSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             ReceiptLineRow(
                 name: line.status == .matched ? (line.match?.name ?? line.name) : line.name,
-                qty: line.qty,
+                qty: line.detail,
                 price: line.price.map(Money.pln) ?? "—",
                 status: line.status,
                 included: line.included,
@@ -550,24 +552,24 @@ struct ScanReceiptSheet: View {
             }
 
             if line.status == .unclear {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: TG.Space.s2) {
-                        if let candidate = line.didYouMean {
-                            Text("Did you mean").font(TG.Font.footnote).foregroundStyle(TG.Colors.ink2)
-                            Chip(candidate.name) { flow?.editReview { $0.acceptSuggestion(line.id) } }
-                        }
-                        if !(review?.freeCandidates(for: line.id).isEmpty ?? true) {
-                            Menu { chooseItems(for: line) } label: {
-                                Chip("Choose from your list", icon: .chevronDown) {}
-                                    .allowsHitTesting(false)
-                            }
-                            .accessibilityLabel("Choose from your list")
-                        }
-                        Chip("Not on the list") { flow?.editReview { $0.keepAsExtra(line.id) } }
+                // Wraps instead of scrolling sideways, so nothing is cut off at the edge (any text size).
+                FlowLayout(spacing: TG.Space.s2, lineSpacing: TG.Space.s2) {
+                    if let candidate = line.didYouMean {
+                        Text("Did you mean").font(TG.Font.footnote).foregroundStyle(TG.Colors.ink2)
+                        Chip(candidate.name) { flow?.editReview { $0.acceptSuggestion(line.id) } }
                     }
-                    .padding(.horizontal, TG.Space.s4)
-                    .padding(.bottom, TG.Space.s3)
+                    if !(review?.freeCandidates(for: line.id).isEmpty ?? true) {
+                        Menu { chooseItems(for: line) } label: {
+                            Chip("Choose from your list", icon: .chevronDown) {}
+                                .allowsHitTesting(false)
+                        }
+                        .accessibilityLabel("Choose from your list")
+                    }
+                    Chip("Not on the list") { flow?.editReview { $0.keepAsExtra(line.id) } }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, TG.Space.s4)
+                .padding(.bottom, TG.Space.s3)
             }
         }
     }
@@ -596,7 +598,11 @@ struct ScanReceiptSheet: View {
                     .accessibilityLabel("Receipt total")
                 Text("zł").font(TG.Font.headline).foregroundStyle(TG.Colors.ink)
             }
-            if let total = review.total, abs(NSDecimalNumber(decimal: total - review.includedSum).doubleValue) >= 0.01 {
+            if review.linesDontAddUp, let printed = review.printedTotal {
+                Text("The lines don’t add up to the receipt’s total (\(Money.pln(printed))). Check the prices.")
+                    .font(TG.Font.footnote.weight(.medium))
+                    .foregroundStyle(TG.Colors.warning)
+            } else if let total = review.total, abs(NSDecimalNumber(decimal: total - review.includedSum).doubleValue) >= 0.01 {
                 Text("The ticked lines add up to \(Money.pln(review.includedSum)).")
                     .font(TG.Font.footnote)
                     .foregroundStyle(TG.Colors.ink2)

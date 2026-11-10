@@ -17,6 +17,11 @@ enum Money {
     /// "78,40" — for editable fields (the "zł" sits beside them).
     static func number(_ amount: Decimal) -> String { amount.formatted(style) }
 
+    /// A quantity with a comma decimal: 2 → "2" (0 digits), 1.02 kg → "1,020" (3 digits).
+    static func number(_ amount: Decimal, fractionDigits: Int) -> String {
+        amount.formatted(.number.precision(.fractionLength(fractionDigits)).locale(Locale(identifier: "pl_PL")))
+    }
+
     /// What someone typed: "78,4", "78.40", "1 234,50" → 78.4 / 1234.5; `nil` for empty or not a number.
     static func parse(_ text: String) -> Decimal? {
         let cleaned = text.filter { !$0.isWhitespace && $0 != "\u{00A0}" && $0 != "\u{202F}" }

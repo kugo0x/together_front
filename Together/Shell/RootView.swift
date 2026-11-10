@@ -96,7 +96,8 @@ struct RootView: View {
 
     /// Receipt reading. Until phase 9 wires `APIReceiptRecognizer`, a stand-in answers like the backend would.
     /// Launch arguments (UI tests and screenshots):
-    /// - `-receiptFixture corner|biedronka|offline|unreadable` picks its answer; `corner,biedronka` answers each
+    /// - `-receiptFixture <name>` picks its answer (`ReceiptFixture.all`: corner, biedronka, mismatch, offline,
+    ///   unreadable, notReceipt, tooLong, busy, limit, disabled); `corner,biedronka` answers each
     ///   receipt of a queue with the next one;
     /// - `-receiptDelay <ms>` how long "reading" takes (default 2500).
     private var receiptRecognizer: ReceiptRecognizer {
@@ -107,7 +108,8 @@ struct RootView: View {
         return FakeReceiptRecognizer(
             fixtures: names.compactMap { ReceiptFixture.all[$0] },
             delay: .milliseconds(delay),
-            candidates: { store.receiptCandidates(in: $0) }
+            candidates: { store.receiptCandidates(in: $0) },
+            calendar: store.calendar
         )
     }
 

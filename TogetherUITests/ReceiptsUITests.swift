@@ -184,4 +184,36 @@ final class ReceiptsUITests: XCTestCase {
         XCTAssertTrue(text("Corner Market").exists)
         XCTAssertTrue(text("Biedronka").exists)
     }
+
+    /// `total_matches: false` — the review asks to check the prices.
+    func testLinesThatDontAddUpAskToCheckPrices() {
+        launch("mismatch")
+        startScan()
+        XCTAssertTrue(app.staticTexts["Review receipt"].waitForExistence(timeout: 6))
+        XCTAssertTrue(text("don’t add up to the receipt’s total (47,44 zł)").exists)
+        XCTAssertTrue(app.buttons["Choose from your list"].exists, "the chips wrap instead of being cut off")
+    }
+
+    /// `receipt_too_long`: back to the photos to add the rest of the receipt.
+    func testTooLongReceiptIsScannedInParts() {
+        launch("tooLong")
+        startScan()
+        XCTAssertTrue(app.staticTexts["This receipt is too long for one go"].waitForExistence(timeout: 6))
+        XCTAssertFalse(app.buttons["Try again"].exists)
+        tapHittable("Scan in parts")
+        XCTAssertTrue(app.staticTexts["1 photo of this receipt"].waitForExistence(timeout: 3), "the photo is kept")
+        XCTAssertTrue(app.staticTexts["Add another photo of this receipt"].exists)
+    }
+
+    /// 429 — no retry and no "another photo" until the limit resets.
+    func testDailyLimit() {
+        launch("limit")
+        startScan()
+        XCTAssertTrue(app.staticTexts["That’s all the scans for today"].waitForExistence(timeout: 6))
+        XCTAssertTrue(text("in about 6 hours").exists)
+        XCTAssertFalse(app.buttons["Try again"].exists)
+        XCTAssertFalse(app.buttons["Try another photo"].exists)
+        tapHittable("Cancel")
+        XCTAssertTrue(app.staticTexts["7 to buy · Shared with Sam"].waitForExistence(timeout: 3))
+    }
 }
