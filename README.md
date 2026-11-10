@@ -27,6 +27,20 @@ Launch arguments for checks and screenshots: `-signedIn YES` (start signed in as
 welcome screen), `-initialTab home|groceries|tasks|notes`, `-initialSpace shared|personal` (sets the starting space; switching still works),
 `-noNotifications YES`, `-alone YES` (no partner yet: invite banner), `-demoToast partner|undo`, `-catalog YES` (design-system catalog).
 
+Receipts (no camera in the simulator): `-receiptPhotos N` opens Scan receipt with N blank photos (N > 1 asks
+"parts of one receipt" vs "separate receipts"), `-receiptSeparate YES|NO` answers that question,
+`-receiptFixture corner|biedronka|offline|unreadable` picks what the stand-in recognizer answers (`corner,biedronka`
+answers each receipt of a queue with the next one), `-receiptDelay <ms>` sets how long "reading" takes (default 2500).
+
+## Receipts
+
+Recognition happens on the backend (`POST /v1/spaces/{id}/receipts/scan`, Claude API — the key never ships in the
+app). The app only prepares the photos (`ReceiptImage`: JPEG, long side ≤ 1568 px, no metadata), sends 1–5 photos
+of one receipt per call (`ReceiptRecognizer`) and shows the server's matching for review; nothing changes until
+Confirm. Several different receipts are a queue (`ReceiptScanFlow`): read in parallel, reviewed one by one, a trip
+each. Until phase 9 a fixture-backed `FakeReceiptRecognizer` is active; `APIReceiptRecognizer` follows the expected
+request/response and must be aligned with the backend spec.
+
 ## Layout
 
 - `Together/DesignSystem/Tokens.swift` — copied verbatim from `../design/ios/Tokens.swift`. Don't edit; re-copy when tokens change.
@@ -37,8 +51,10 @@ welcome screen), `-initialTab home|groceries|tasks|notes`, `-initialSpace shared
 - `Together/Store/` — in-memory `AppStore` (methods shaped like the backend API) and reminder notifications.
 - `Together/Auth/` — `Session` (signed out → onboarding → signed in), `AuthService` (fake for now, shaped like
   `/v1/auth/*`), Keychain wrapper, invites, Apple/Google sign-in helpers. `Together/App/AppRoot.swift` switches on the session.
+- `Together/Receipts/` — receipt scan model: recognizer protocol (API + stand-in), fixtures, image prep, scan
+  flow, review.
 - `Together/Shell/` — tab shell, global space, router, toast overlay; `Together/Features/` — Onboarding, Home,
-  Groceries, Tasks, Notes, Settings.
+  Groceries, Receipts (scan sheet, History), Tasks, Notes, Settings.
 - `TogetherTests/` — unit tests (Swift Testing) and an opt-in snapshot renderer; `TogetherUITests/` — XCUITest flows.
 
 The design system lives in the app module (not a separate package) because the generated `Tokens.swift` uses internal access.

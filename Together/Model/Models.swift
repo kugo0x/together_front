@@ -131,7 +131,8 @@ struct ReceiptLine: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
     var name: String
     var qty: String?
-    var price: Decimal
+    /// `nil` when the price couldn't be read.
+    var price: Decimal?
     var status: Status
     var included: Bool = true
 }
@@ -144,6 +145,8 @@ struct Trip: Identifiable, Codable, Hashable, Sendable {
     var shoppers: [Person]
     var itemCount: Int
     var total: Decimal?
+    /// "Biedronka" — from the scanned receipt.
+    var merchant: String? = nil
     var receiptImageID: String?
     var lines: [ReceiptLine] = []
 }
