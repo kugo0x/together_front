@@ -657,6 +657,12 @@ final class AppStore {
     /// Someone joined my Shared space (or I joined theirs).
     func joinPartner(_ person: Person) {
         partner = person
+        Task { await sync?.spacesChanged() }
+    }
+
+    /// The Shared space was created (first invite) — the server knows it before the store does.
+    func sharedSpaceCreated() async {
+        await sync?.spacesChanged()
     }
 
     /// Leave the Shared space: everything in it stays with the partner; I keep only Personal.

@@ -7,6 +7,9 @@ protocol StoreSync: AnyObject {
     func record(_ change: StoreChange)
     /// A trip's receipt lines, fetched when it is opened in History.
     func loadLines(of tripID: Trip.ID) async
+    /// Membership changed outside the store (an invite created the Shared space, a code joined one): re-learn the
+    /// spaces and load them.
+    func spacesChanged() async
 }
 
 /// A local change, in the store's words. The API call for each lives in `RemoteSync`.

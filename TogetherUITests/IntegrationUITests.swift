@@ -94,6 +94,58 @@ final class IntegrationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Mark bought: Oat milk"].exists, "Shared items don't show in Personal")
     }
 
+    /// A new account: sign up → name → "Invite your partner" → share the code; a second new account joins with it
+    /// → "Kuba joined your Shared space"; then a Shared grocery reaches Kuba. (Leaves the app signed in as the new
+    /// account, so the next test signs in again.)
+    func testSignUpInviteAndPartnerJoins() async throws {
+        launch(reset: true)
+        Self.signedIn = false
+        app.buttons["Get started"].tap()
+        let emailField = app.textFields["Email"]
+        XCTAssertTrue(emailField.waitForExistence(timeout: 5))
+        emailField.tap()
+        emailField.typeText("ola-\(UUID().uuidString.prefix(6).lowercased())@together.test")
+        let passwordField = app.secureTextFields["Password"]
+        passwordField.tap()
+        if app.staticTexts["Use Strong Password?"].waitForExistence(timeout: 1.5) {
+            app.buttons["Close"].firstMatch.tap()
+            passwordField.tap()
+        }
+        passwordField.typeText("integration-\(UUID().uuidString.prefix(8))")
+        app.buttons["authSubmit"].tap()
+        dismissSavePassword()
+
+        let name = app.textFields["Your name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 20), "onboarding")
+        name.typeText("Ola")
+        app.buttons["Continue"].tap()
+        let invite = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Invite your partner")).firstMatch
+        XCTAssertTrue(invite.waitForExistence(timeout: 10))
+        invite.tap()
+
+        let code = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Code TGT-")).firstMatch
+        XCTAssertTrue(code.waitForExistence(timeout: 15), "the server made a code")
+        let inviteCode = String(code.label.dropFirst("Code ".count))
+        app.buttons["Send invite link"].tap()
+        // The system share sheet exposes its actions as cells, not buttons.
+        let copy = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Copy")).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 5), "share sheet")
+        copy.tap()
+        XCTAssertTrue(text("Invite sent").waitForExistence(timeout: 5))
+
+        let kuba = try await NewPartner(baseURL: baseURL, name: "Kuba")
+        try await kuba.accept(inviteCode)
+        XCTAssertTrue(text("Kuba joined your Shared space").waitForExistence(timeout: 15))
+
+        app.tabBars.buttons["Groceries"].tap()
+        XCTAssertTrue(text("Shared with Kuba").waitForExistence(timeout: 10))
+        let item = "Welcome bread \(Int.random(in: 1000...9999))"
+        field.tap()
+        field.typeText("\(item)\n")
+        try await kuba.waitForItem(named: item)
+        try await kuba.deleteAccount()
+    }
+
     /// Last (alphabetically): it leaves the app signed out.
     func testWrongPasswordShowsTheServersAnswer() throws {
         launch(reset: true)
@@ -146,6 +198,40 @@ final class IntegrationUITests: XCTestCase {
         let itemID = try await sam.waitForItem(named: name)
         try await sam.remove(itemID)
         XCTAssertFalse(app.staticTexts["You’re offline"].exists)
+    }
+}
+
+/// A brand-new account on another phone, as plain API calls.
+private struct NewPartner {
+    let baseURL: String
+    let token: String
+
+    init(baseURL: String, name: String) async throws {
+        self.baseURL = baseURL
+        let result = try await SamsPhone.call("POST", baseURL + "/v1/auth/register", token: nil, body: [
+            "email": "kuba-\(UUID().uuidString.prefix(6).lowercased())@together.test",
+            "password": "integration-\(UUID().uuidString)", "display_name": name,
+        ])
+        token = try XCTUnwrap((result["tokens"] as? [String: Any])?["access_token"] as? String)
+    }
+
+    func accept(_ code: String) async throws {
+        _ = try await SamsPhone.call("POST", baseURL + "/v1/invites/\(code)/accept", token: token)
+    }
+
+    func waitForItem(named name: String) async throws {
+        let spaces = try await SamsPhone.call("GET", baseURL + "/v1/spaces", token: token)
+        let shared = try XCTUnwrap((spaces["spaces"] as? [[String: Any]])?.first { $0["kind"] as? String == "shared" }?["id"] as? String)
+        for _ in 0..<40 {
+            let list = try await SamsPhone.call("GET", baseURL + "/v1/spaces/\(shared)/lists/default", token: token)
+            if (list["items"] as? [[String: Any]])?.contains(where: { $0["name"] as? String == name }) == true { return }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        XCTFail("\(name) never reached the partner")
+    }
+
+    func deleteAccount() async throws {
+        _ = try await SamsPhone.call("DELETE", baseURL + "/v1/me", token: token)
     }
 }
 

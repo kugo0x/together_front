@@ -349,6 +349,78 @@ struct APILiveTests {
         #expect(alex.store.trips(in: .shared).contains { $0.total == result.trip.total && $0.hasReceipt })
     }
 
+    // MARK: Suggestions, settings, profile
+
+    /// Skip hides a suggestion for both phones; Add all puts the rest on the list with their usual quantity.
+    @Test func suggestionsSkipAndAddAll() async throws {
+        let alex = try await Phone.alex(), sam = try await Phone.sam()
+        await alex.open()
+        await sam.open()
+        defer { alex.close(); sam.close() }
+        let names = alex.store.suggestions(in: .shared).map(\.name)
+        try #require(names.count >= 2, "the seed has suggestions")
+        alex.store.dismissSuggestion(named: names[0], in: .shared)
+        try await alex.settle()
+        await sam.sync.reload(.shared)
+        #expect(!sam.store.suggestions(in: .shared).map(\.name).contains(names[0]), "hidden for Sam too")
+
+        let rest = alex.store.suggestions(in: .shared).map(\.name)
+        let added = alex.store.acceptSuggestions(named: rest, in: .shared)
+        #expect(added.count == rest.count)
+        try await alex.settle()
+        await sam.sync.reload(.shared)
+        for name in rest {
+            #expect(sam.store.toBuy(in: .shared).contains { $0.name == name }, "\(name) on the server's list")
+        }
+        // Undo what the test added (the dismissal expires on its own).
+        for item in added { alex.store.removeItem(item.id, in: .shared) }
+        try await alex.settle()
+    }
+
+    /// Settings round-trip: suggestions off empties them, notifications, quiet hours, shopping day.
+    @Test func settingsReachTheServer() async throws {
+        let alex = try await Phone.alex()
+        await alex.open()
+        defer { alex.close() }
+        let store = alex.store
+        let before = (store.suggestionsEnabled, store.notificationPrefs, store.shoppingDay, store.quietHours[store.me])
+        store.suggestionsEnabled = false
+        store.notificationPrefs.taskAssigned = false
+        store.shoppingDay = 5 // Thursday
+        store.quietHours[store.me] = QuietHours(start: 23 * 60, end: 7 * 60)
+        try await alex.settle()
+
+        let settings = try await alex.client.send(.get("v1/me/settings"), as: SettingsDTO.self)
+        #expect(settings.suggestionsEnabled == false)
+        #expect(settings.notifications.taskAssigned == false)
+        #expect(settings.quietHours == QuietHoursDTO(start: "23:00", end: "07:00"))
+        let shared = try #require(try await alex.client.send(.get("v1/spaces"), as: SpacesDTO.self).spaces.first { $0.kind == "shared" })
+        #expect(shared.shoppingDay == 4, "API: 0 = Sunday")
+        #expect(store.suggestions(in: .shared).isEmpty)
+
+        // Back as it was.
+        store.suggestionsEnabled = before.0
+        store.notificationPrefs = before.1
+        store.shoppingDay = before.2
+        store.quietHours[store.me] = before.3
+        try await alex.settle()
+        await alex.sync.loadAll()
+        #expect(store.suggestionsEnabled == before.0 && store.shoppingDay == before.2)
+    }
+
+    @Test func avatarUploadAndRemove() async throws {
+        let alex = try await Phone.alex()
+        await alex.open()
+        defer { alex.close() }
+        let jpeg = try ReceiptImage.jpeg(from: Self.blank())
+        alex.store.myAvatar = jpeg
+        try await alex.settle()
+        #expect(try await alex.client.send(.get("v1/me"), as: MeDTO.self).avatar?.url != nil)
+        alex.store.myAvatar = nil
+        try await alex.settle()
+        #expect(try await alex.client.send(.get("v1/me"), as: MeDTO.self).avatar == nil)
+    }
+
     // MARK: Invites
 
     /// Two new accounts: one invites, the other joins with the code; the inviter hears about it.

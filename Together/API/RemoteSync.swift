@@ -281,12 +281,30 @@ final class RemoteSync: StoreSync {
 
     private func id(_ local: UUID) -> UUID { serverIDs[local] ?? local }
 
-    private func space(_ kind: SpaceKind) throws -> UUID {
-        guard let id = directory.spaceIDs[kind] else {
+    /// The server ID of a space. Shared doesn't exist until the first invite — or until something is put in it
+    /// while alone; then it is created here (a person has at most one).
+    private func space(_ kind: SpaceKind) async throws -> UUID {
+        if let id = directory.spaceIDs[kind] { return id }
+        guard kind == .shared else {
             throw APIError.server(status: 404, code: "space_not_found", message: "That space isn’t there any more.",
                                   retryAfter: nil, body: Data())
         }
+        let spaces = try await client.send(.get("v1/spaces"), as: SpacesDTO.self).spaces
+        var found = spaces.first(where: { $0.kind == "shared" })?.id
+        if found == nil {
+            found = try await client.send(.send("POST", "v1/spaces", json: CreateSpaceBody()), as: SpaceDTO.self).id
+        }
+        guard let id = found else { throw APIError.badResponse("no Shared space") }
+        directory.spaceIDs[.shared] = id
+        let list = try await client.send(.get("v1/spaces/\(id)/lists/default"), as: ListWithItemsDTO.self)
+        directory.defaultListIDs[.shared] = list.list.id
+        if foreground { openStreams() }
         return id
+    }
+
+    func spacesChanged() async {
+        while loading { try? await Task.sleep(for: .milliseconds(100)) } // a load in flight may predate the change
+        await loadAll()
     }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
@@ -294,34 +312,34 @@ final class RemoteSync: StoreSync {
         switch change {
         // Groceries
         case .itemAdded(let item, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             let dto = try await client.send(.send("POST", "v1/spaces/\(s)/lists/default/items",
                                                   json: AddItemBody(name: item.name, qty: item.qty, note: item.note)),
                                             as: GroceryItemDTO.self)
             adopt(dto, replacing: item.id)
         case .itemEdited(let item, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             let dto = try await client.send(.send("PATCH", "v1/spaces/\(s)/items/\(id(item.id))",
                                                   json: EditItemBody(name: item.name, qty: item.qty ?? "", note: item.note ?? "")),
                                             as: GroceryItemDTO.self)
             adopt(dto, replacing: item.id)
         case .itemBought(let itemID, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             let dto = try await client.send(.send("POST", "v1/spaces/\(s)/items/\(id(itemID))/bought"), as: GroceryItemDTO.self)
             adopt(dto, replacing: itemID)
         case .itemUnbought(let itemID, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             let dto = try await client.send(.send("DELETE", "v1/spaces/\(s)/items/\(id(itemID))/bought"), as: GroceryItemDTO.self)
             adopt(dto, replacing: itemID)
         case .itemRemoved(let item, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             do {
                 try await client.send(.delete("v1/spaces/\(s)/items/\(id(item.id))"))
             } catch let error as APIError where error.code == "item_not_found" {
                 // Already gone (the partner removed it too).
             }
         case .itemRestored(let item, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             var dto = try await client.send(.send("POST", "v1/spaces/\(s)/lists/default/items",
                                                   json: AddItemBody(name: item.name, qty: item.qty, note: item.note)),
                                             as: GroceryItemDTO.self)
@@ -330,10 +348,10 @@ final class RemoteSync: StoreSync {
             }
             adopt(dto, replacing: item.id)
         case .suggestionDismissed(let name, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             try await client.send(.send("POST", "v1/spaces/\(s)/suggestions/dismiss", json: DismissSuggestionBody(name: name)))
         case .suggestionsAccepted(let names, let added, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             let items = try await client.send(.send("POST", "v1/spaces/\(s)/suggestions/accept",
                                                     json: AcceptSuggestionsBody(names: names)), as: ItemsDTO.self).items
             for dto in items {
@@ -341,7 +359,7 @@ final class RemoteSync: StoreSync {
                 adopt(dto, replacing: local?.id ?? dto.id)
             }
         case .receiptConfirmed(let review, let trip, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             let body = ConfirmReceiptBody(
                 lines: review.lines.filter(\.included).map { line in
                     let matched = line.status == .matched ? line.match : nil
@@ -366,31 +384,31 @@ final class RemoteSync: StoreSync {
 
         // Tasks
         case .taskCreated(let task, let draft):
-            let s = try space(task.space)
+            let s = try await space(task.space)
             let dto = try await client.send(.send("POST", "v1/spaces/\(s)/tasks", json: APIMapping.createBody(task, draft)),
                                             as: TaskDTO.self)
             adopt(dto, replacing: task.id)
         case .taskEdited(let task, _, _):
-            let s = try space(task.space)
+            let s = try await space(task.space)
             let dto = try await client.send(.send("PATCH", "v1/spaces/\(s)/tasks/\(id(task.id))", json: APIMapping.editBody(task)),
                                             as: TaskDTO.self)
             adopt(dto, replacing: task.id)
         case .taskCompleted(let before):
-            let s = try space(before.space)
+            let s = try await space(before.space)
             let result = try await client.send(.send("POST", "v1/spaces/\(s)/tasks/\(id(before.id))/complete"),
                                                as: CompleteTaskDTO.self)
             adopt(result.task, replacing: before.id)
         case .taskReopened(let task):
-            let s = try space(task.space)
+            let s = try await space(task.space)
             let dto = try await client.send(.send("POST", "v1/spaces/\(s)/tasks/\(id(task.id))/reopen"), as: TaskDTO.self)
             adopt(dto, replacing: task.id)
         case .taskDeleted(let task):
-            let s = try space(task.space)
+            let s = try await space(task.space)
             do {
                 try await client.send(.delete("v1/spaces/\(s)/tasks/\(id(task.id))"))
             } catch let error as APIError where error.code == "task_not_found" {}
         case .taskRestored(let task):
-            let s = try space(task.space)
+            let s = try await space(task.space)
             let draft = AppStore.TaskDraft(title: task.title, notes: task.notes, dueDay: task.dueDay,
                                            repeatRule: task.repeatRule, assignee: task.assignee,
                                            reminderAt: task.reminder?.requested)
@@ -401,7 +419,7 @@ final class RemoteSync: StoreSync {
 
         // Notes
         case .noteCreated(let note):
-            let s = try space(note.space)
+            let s = try await space(note.space)
             let dto = try await client.send(.send("POST", "v1/spaces/\(s)/notes",
                                                   json: CreateNoteBody(title: note.title, body: note.body,
                                                                        items: note.checklist.map(\.label))),
@@ -413,22 +431,22 @@ final class RemoteSync: StoreSync {
         case .noteEdited(let note, let base):
             try await saveNote(note, base: base)
         case .noteDeleted(let note):
-            let s = try space(note.space)
+            let s = try await space(note.space)
             do {
                 try await client.send(.delete("v1/spaces/\(s)/notes/\(id(note.id))"))
             } catch let error as APIError where error.code == "note_not_found" {}
         case .noteRestored(let note):
-            let s = try space(note.space)
+            let s = try await space(note.space)
             let dto = try await client.send(.send("POST", "v1/spaces/\(s)/notes/\(id(note.id))/restore"), as: NoteDTO.self)
             adopt(dto, replacing: note.id)
         case .noteMoved(let note, let from):
-            let s = try space(from)
-            let target = try space(note.space)
+            let s = try await space(from)
+            let target = try await space(note.space)
             let result = try await client.send(.send("POST", "v1/spaces/\(s)/notes/\(id(note.id))/move",
                                                      json: MoveNoteBody(spaceId: target)), as: MoveNoteDTO.self)
             adopt(result.note, replacing: note.id)
         case .checklistAdded(let item, let noteID, let at, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             let dto = try await client.send(.send("POST", "v1/spaces/\(s)/notes/\(id(noteID))/items",
                                                   json: AddNoteItemBody(text: item.label, position: at)), as: NoteDTO.self)
             // The new line is the one at `at` that we don't know yet.
@@ -439,13 +457,13 @@ final class RemoteSync: StoreSync {
             }
             adoptChecklist(dto, noteID: noteID)
         case .checklistEdited(let itemID, let noteID, let text, let done, let position, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             let dto = try await client.send(.send("PATCH", "v1/spaces/\(s)/notes/\(id(noteID))/items/\(id(itemID))",
                                                   json: EditNoteItemBody(text: text, done: done, position: position)),
                                             as: NoteDTO.self)
             adoptChecklist(dto, noteID: noteID)
         case .checklistDeleted(let itemID, let noteID, let kind):
-            let s = try space(kind)
+            let s = try await space(kind)
             do {
                 let dto = try await client.send(.delete("v1/spaces/\(s)/notes/\(id(noteID))/items/\(id(itemID))"), as: NoteDTO.self)
                 adoptChecklist(dto, noteID: noteID)
@@ -489,7 +507,7 @@ final class RemoteSync: StoreSync {
     /// PATCH with `If-Match`. On `409 version_conflict` the partner saved in between: take theirs where I didn't
     /// change a field, mine where I did, and save once more; the editor is told to reload and says it merged.
     private func saveNote(_ note: Note, base: Note) async throws {
-        let s = try space(note.space)
+        let s = try await space(note.space)
         var request = APIRequest.send("PATCH", "v1/spaces/\(s)/notes/\(id(note.id))",
                                       json: EditNoteBody(title: note.title, body: note.body))
         request.headers["If-Match"] = "\"\(base.version)\""
