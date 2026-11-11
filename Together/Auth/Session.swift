@@ -197,6 +197,7 @@ final class Session {
 
     private func clear() {
         try? keychain.remove(Self.keychainKey)
+        if let user { SyncCache.remove(userID: user.id) } // the last load's lists and notes stay with the account
         user = nil
         tokens = nil
         state = .signedOut
