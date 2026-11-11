@@ -5,7 +5,8 @@ import os
 /// Keeps `AppStore` and the server in step while signed in against the API.
 ///
 /// - **Load**: `/me`, `/me/settings`, `/spaces`, members, and per space the default list with its items, suggestions,
-///   tasks (active + done), notes and three months of trips. The store shows exactly that.
+///   tasks (active + done), notes and three months of trips, in parallel. The store shows exactly that. The last load
+///   is kept on disk (`SyncCache`), so a launch shows it at once and replaces it when the fresh one is in.
 /// - **Changes**: every local change (`record`) is already on screen (optimistic UI). They are sent in order from one
 ///   queue; an item created here gets the server's ID when its POST returns, and later changes use that ID.
 ///   Offline, the queue pauses (the banner says so) and resumes when the connection is back; grocery items typed
@@ -37,14 +38,21 @@ final class RemoteSync: StoreSync {
     private var loading = false
     /// The app is in the foreground: streams are open whenever the spaces are known.
     private var foreground = false
+    /// The last load on disk (`nil`: not kept, e.g. in tests that drive two phones as fresh installs).
+    private let cache: SyncCache?
+    private var shownCache = false
+    private var loadsInFlight = 0
+    private var heard: [(event: SpaceEventDTO, kind: SpaceKind)] = []
 
-    init(client: APIClient, store: AppStore, toasts: ToastCenter, me: Person, calendar: Calendar = .current) {
+    init(client: APIClient, store: AppStore, toasts: ToastCenter, me: Person, calendar: Calendar = .current,
+         cachesLoads: Bool = true) {
         self.client = client
         self.store = store
         self.toasts = toasts
         self.calendar = calendar
         directory = ServerDirectory(me: me)
         pending = PendingGroceries(userID: me.id)
+        cache = cachesLoads ? SyncCache(userID: me.id) : nil
         store.sync = self
         path.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied else { return }
@@ -72,45 +80,43 @@ final class RemoteSync: StoreSync {
 
     /// Everything the app shows, from the server. Called after sign-in, on foreground and after a reconnect.
     /// A load already running is not started twice.
+    ///
+    /// - The first load of a launch shows the cached last load at once (no spinner), then the fresh one.
+    /// - The requests run in parallel: `/me`, settings and spaces, then members and every space's data together.
+    /// - The event streams open as soon as the spaces are known, and partner events heard while the load runs are
+    ///   applied again on top of its snapshot (which may predate them) — otherwise a note the partner adds
+    ///   mid-load would vanish until the next load.
     func loadAll() async {
         guard !loading else { return }
         loading = true
+        let mark = beginLoad()
         defer {
+            endLoad()
             loading = false
             store?.hasLoaded = true // offline too: show what's here (nothing yet) with the banner, not a spinner
             if foreground { openStreams() }
         }
+        if !loaded, !shownCache, let cached = cache?.read() {
+            shownCache = true
+            show(cached)
+            store?.hasLoaded = true
+            if foreground { openStreams() }
+        }
         do {
-            let me = try await client.send(.get("v1/me"), as: MeDTO.self)
-            let settings = try await client.send(.get("v1/me/settings"), as: SettingsDTO.self)
-            let spaces = try await client.send(.get("v1/spaces"), as: SpacesDTO.self).spaces
-            var directory = self.directory
-            directory.spaceIDs = [:]
-            for space in spaces {
-                if space.kind == "personal" { directory.spaceIDs[.personal] = space.id }
-                if space.kind == "shared" { directory.spaceIDs[.shared] = space.id }
-            }
-            var partner: Person?
-            var myTint: Person.Tint = .alex
-            if let shared = directory.spaceIDs[.shared] {
-                let members = try await client.send(.get("v1/spaces/\(shared)/members"), as: MembersDTO.self).members
-                for person in ServerDirectory.people(from: members) {
-                    directory.people[person.id] = person
-                    if person.id == me.id { myTint = person.tint } else { partner = person }
-                }
-            }
-            directory.me = Person(id: me.id, name: me.displayName, tint: myTint)
-            directory.people[me.id] = directory.me
-            self.directory = directory
-
-            var snapshot = Snapshot()
-            for (kind, id) in directory.spaceIDs {
-                try await snapshot.load(kind, spaceID: id, client: client, directory: &directory, calendar: calendar)
-            }
-            self.directory = directory
-            snapshot.relink(localID)
-            apply(me: me, settings: settings, spaces: spaces, partner: partner, snapshot: snapshot)
+            async let meRequest = client.send(.get("v1/me"), as: MeDTO.self)
+            async let settingsRequest = client.send(.get("v1/me/settings"), as: SettingsDTO.self)
+            async let spacesRequest = client.send(.get("v1/spaces"), as: SpacesDTO.self)
+            let (me, settings, spaces) = try await (meRequest, settingsRequest, spacesRequest.spaces)
+            let ids = SyncBundle.spaceIDs(spaces)
+            directory.spaceIDs = ids
+            if foreground { openStreams() }
+            async let members = Self.members(of: ids[.shared], client: client)
+            async let data = Self.fetchSpaces(ids, client: client, calendar: calendar)
+            let bundle = try await SyncBundle(me: me, settings: settings, spaces: spaces, members: members, spaceData: data)
+            show(bundle)
+            replayHeard(since: mark)
             loaded = true
+            cache?.write(bundle)
             restorePendingGroceries()
             drain()
         } catch APIError.offline {
@@ -124,20 +130,76 @@ final class RemoteSync: StoreSync {
         }
     }
 
+    /// Puts a load (fresh or cached) into the store.
+    private func show(_ bundle: SyncBundle) {
+        var directory = self.directory
+        directory.spaceIDs = SyncBundle.spaceIDs(bundle.spaces)
+        var partner: Person?
+        var myTint: Person.Tint = .alex
+        for person in ServerDirectory.people(from: bundle.members) {
+            directory.people[person.id] = person
+            if person.id == bundle.me.id { myTint = person.tint } else { partner = person }
+        }
+        directory.me = Person(id: bundle.me.id, name: bundle.me.displayName, tint: myTint)
+        directory.people[bundle.me.id] = directory.me
+        var snapshot = Snapshot()
+        for (kind, data) in bundle.spaceData where directory.spaceIDs[kind] != nil {
+            snapshot.load(kind, from: data, directory: &directory)
+        }
+        self.directory = directory
+        snapshot.relink(localID)
+        apply(me: bundle.me, settings: bundle.settings, spaces: bundle.spaces, partner: partner, snapshot: snapshot)
+    }
+
+    private nonisolated static func members(of shared: UUID?, client: APIClient) async throws -> [MemberDTO] {
+        guard let shared else { return [] }
+        return try await client.send(.get("v1/spaces/\(shared)/members"), as: MembersDTO.self).members
+    }
+
+    private nonisolated static func fetchSpaces(_ ids: [SpaceKind: UUID], client: APIClient,
+                                                calendar: Calendar) async throws -> [SpaceKind: SpaceFetch] {
+        try await withThrowingTaskGroup(of: (SpaceKind, SpaceFetch).self) { group in
+            for (kind, id) in ids {
+                group.addTask { (kind, try await SpaceFetch.fetch(spaceID: id, client: client, calendar: calendar)) }
+            }
+            var out: [SpaceKind: SpaceFetch] = [:]
+            for try await (kind, data) in group { out[kind] = data }
+            return out
+        }
+    }
+
     /// Re-fetches one space (after a refused change or a stream reconnect).
     func reload(_ kind: SpaceKind) async {
         guard let id = directory.spaceIDs[kind] else { return }
+        let mark = beginLoad()
+        defer { endLoad() }
+        guard let data = try? await SpaceFetch.fetch(spaceID: id, client: client, calendar: calendar) else { return }
         var snapshot = Snapshot()
         var directory = self.directory
-        do {
-            try await snapshot.load(kind, spaceID: id, client: client, directory: &directory, calendar: calendar)
-        } catch {
-            return
-        }
+        snapshot.load(kind, from: data, directory: &directory)
         self.directory.defaultListIDs[kind] = directory.defaultListIDs[kind]
         guard let store else { return }
         snapshot.relink(localID)
         store.applyingServer { snapshot.replace(kind, in: store, keepingLocal: localOnlyIDs()) }
+        replayHeard(since: mark, only: kind)
+    }
+
+    // Partner events heard while a load is in flight, to apply again once its snapshot is in.
+    private func beginLoad() -> Int {
+        loadsInFlight += 1
+        return heard.count
+    }
+
+    private func endLoad() {
+        loadsInFlight -= 1
+        if loadsInFlight == 0 { heard = [] }
+    }
+
+    private func replayHeard(since mark: Int, only kind: SpaceKind? = nil) {
+        guard mark < heard.count else { return }
+        for (event, space) in heard[mark...] where kind == nil || space == kind {
+            handle(event, in: space, replaying: true)
+        }
     }
 
     private func apply(me: MeDTO, settings: SettingsDTO, spaces: [SpaceDTO], partner: Person?, snapshot: Snapshot) {
@@ -758,6 +820,12 @@ final class RemoteSync: StoreSync {
 
     /// One event from the partner (my own come back too; their effect is already here).
     func apply(_ event: SpaceEventDTO, in kind: SpaceKind) {
+        if loadsInFlight > 0 { heard.append((event, kind)) }
+        handle(event, in: kind, replaying: false)
+    }
+
+    /// `replaying`: heard during a load and applied again over its snapshot — no toasts, no second reload.
+    private func handle(_ event: SpaceEventDTO, in kind: SpaceKind, replaying: Bool) {
         guard let store, event.actorId != directory.me.id else { return }
         let actor = directory.person(event.actorId)
         store.applyingServer {
@@ -765,7 +833,7 @@ final class RemoteSync: StoreSync {
             case "item.added", "item.updated", "item.bought", "item.unbought":
                 guard let dto = event.item else { return }
                 upsert(dto)
-                if event.type == "item.bought", let actor { toasts.show("\(actor.name) bought \(dto.name)", person: actor) }
+                if !replaying, event.type == "item.bought", let actor { toasts.show("\(actor.name) bought \(dto.name)", person: actor) }
             case "item.removed":
                 if let removed = event.removedId { store.groceryItems.removeAll { $0.id == localID(removed) } }
             case "trip.created":
@@ -784,7 +852,7 @@ final class RemoteSync: StoreSync {
                     store.tasks.insert(task, at: 0)
                 }
                 store.syncNotification(task)
-                if event.type == "task.completed", let actor { toasts.show("\(actor.name) did “\(dto.title)”", person: actor) }
+                if !replaying, event.type == "task.completed", let actor { toasts.show("\(actor.name) did “\(dto.title)”", person: actor) }
             case "task.deleted":
                 if let removed = event.removedId {
                     store.tasks.removeAll { $0.id == localID(removed) }
@@ -808,9 +876,9 @@ final class RemoteSync: StoreSync {
                 let person = Person(id: member.userId, name: member.displayName, tint: .sam)
                 directory.people[person.id] = person
                 store.partner = person
-                toasts.show("\(person.name) joined your Shared space", person: person)
+                if !replaying { toasts.show("\(person.name) joined your Shared space", person: person) }
             case "list.created", "list.updated", "list.deleted":
-                Task { await self.reload(kind) }
+                if !replaying { Task { await self.reload(kind) } }
             default:
                 break
             }
@@ -827,39 +895,16 @@ private struct Snapshot {
     var notes: [SpaceKind: [Note]] = [:]
     var trips: [SpaceKind: [Trip]] = [:]
 
-    mutating func load(_ kind: SpaceKind, spaceID: UUID, client: APIClient, directory: inout ServerDirectory,
-                       calendar: Calendar) async throws {
-        let s = spaceID
-        let list = try await client.send(.get("v1/spaces/\(s)/lists/default"), as: ListWithItemsDTO.self)
-        directory.defaultListIDs[kind] = list.list.id
+    /// Maps one space's server data (fresh or cached) into client models.
+    mutating func load(_ kind: SpaceKind, from data: SpaceFetch, directory: inout ServerDirectory) {
+        directory.defaultListIDs[kind] = data.list.list.id
         let dir = directory
-        lists[kind] = [APIMapping.list(list.list, space: kind)]
-        items[kind] = list.items.map { APIMapping.item($0, dir) }
-        suggestions[kind] = try await client.send(.get("v1/spaces/\(s)/suggestions"), as: SuggestionsDTO.self)
-            .suggestions.map(APIMapping.suggestion)
-        let active = try await client.send(.get("v1/spaces/\(s)/tasks", query: [URLQueryItem(name: "view", value: "active")]),
-                                           as: TasksDTO.self).tasks
-        let done = try await client.send(.get("v1/spaces/\(s)/tasks", query: [URLQueryItem(name: "view", value: "done")]),
-                                         as: TasksDTO.self).tasks
-        tasks[kind] = (active + done).map { APIMapping.task($0, space: kind, dir) }
-        notes[kind] = try await client.send(.get("v1/spaces/\(s)/notes"), as: NotesDTO.self)
-            .notes.map { APIMapping.note($0, space: kind, dir) }
-        // History: this month and the two before.
-        var collected: [Trip] = []
-        let zone = calendar.timeZone.identifier
-        for back in 0..<3 {
-            guard let date = calendar.date(byAdding: .month, value: -back, to: .now) else { continue }
-            let c = calendar.dateComponents([.year, .month], from: date)
-            let month = String(format: "%04d-%02d", c.year!, c.month!)
-            let page = try await client.send(.get("v1/spaces/\(s)/trips", query: [
-                URLQueryItem(name: "month", value: month), URLQueryItem(name: "tz", value: zone),
-            ]), as: TripsPageDTO.self)
-            // Without lines: a trip's lines are fetched when it is opened (`RemoteSync.loadLines`).
-            for trip in page.trips where !collected.contains(where: { $0.id == trip.id }) {
-                collected.append(APIMapping.trip(trip, space: kind, dir))
-            }
-        }
-        trips[kind] = collected
+        lists[kind] = [APIMapping.list(data.list.list, space: kind)]
+        items[kind] = data.list.items.map { APIMapping.item($0, dir) }
+        suggestions[kind] = data.suggestions.map(APIMapping.suggestion)
+        tasks[kind] = data.tasks.map { APIMapping.task($0, space: kind, dir) }
+        notes[kind] = data.notes.map { APIMapping.note($0, space: kind, dir) }
+        trips[kind] = data.trips.map { APIMapping.trip($0, space: kind, dir) }
     }
 
     /// Things created on this phone keep their local IDs in the store.
