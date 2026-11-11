@@ -28,7 +28,8 @@ UI tests launch the app with `-noNotifications YES` so no permission alert appea
 The app talks to the Go API in `../back` (`back/api/openapi.yaml`). **Debug** builds use `http://localhost:8080`,
 the local stack: in `../back`, `make dev-up && make dev-seed` starts Postgres and the API in Docker and creates Alex
 and Sam in one Shared space (their test logins are in `../back/dev/seed-users.env`). **Release** builds use the
-Railway service (placeholder URL in `APIConfig` until the domain is fixed). `-apiBaseURL <url>` overrides both.
+Railway service. The URL comes from one place: the `API_BASE_URL` build setting per configuration in `project.yml`
+(→ `APIBaseURL` in Info.plist → `APIConfig.baseURL`). `-apiBaseURL <url>` overrides it.
 
 - `Together/API/APIClient.swift` — one URLSession client: a request ID on every call, typed `APIError`s from the
   API's error format, 401 `invalid_access_token` → one refresh (single-flight, refresh tokens are single use) →
@@ -121,12 +122,9 @@ Both buttons are the official ones (`SignInWithAppleButton`, Google's `GoogleSig
 "… sign-in isn’t set up in this build yet" instead of failing silently. Email + password works without any setup
 (the fake service is seeded with `alex@example.com` / `together123`).
 
-**Apple** (needs a paid Apple Developer team):
-
-1. Set `DEVELOPMENT_TEAM` in `project.yml` and a real `PRODUCT_BUNDLE_IDENTIFIER`.
-2. Add the capability: an entitlements file with `com.apple.developer.applesignin = [Default]`, referenced from
-   `project.yml` (`entitlements: path: Together/Together.entitlements`), and enable "Sign in with Apple" for the App ID.
-3. The backend needs the bundle ID in `APPLE_CLIENT_IDS` (Railway variable) to verify identity tokens.
+**Apple**: set up — team `9GR42Q72Q6`, bundle ID `app.smart-note.together` (App ID with Push Notifications and
+Sign in with Apple), entitlements in `project.yml` (`entitlements:` → `Together/Together.entitlements`).
+The backend needs the bundle ID in `APPLE_CLIENT_IDS` (Railway variable) to verify identity tokens.
 
 **Google**:
 

@@ -1,19 +1,19 @@
 import Foundation
 import os
 
-/// Where the API lives. Debug builds talk to the local stack (`make dev-up` in ../back); Release to the Railway
-/// service. `-apiBaseURL <url>` (launch argument) overrides both — the integration UI tests use it.
+/// Where the API lives: the `APIBaseURL` Info.plist key, filled from the `API_BASE_URL` build setting in
+/// `project.yml` — the local stack (`make dev-up` in ../back) for Debug, the Railway service for Release.
+/// `-apiBaseURL <url>` (launch argument) overrides it — the integration UI tests use it.
 enum APIConfig {
     static var baseURL: URL {
         if let override = UserDefaults.standard.string(forKey: "apiBaseURL"), let url = URL(string: override) {
             return url
         }
-        #if DEBUG
+        if let configured = Bundle.main.object(forInfoDictionaryKey: "APIBaseURL") as? String,
+           let url = URL(string: configured), url.host() != nil {
+            return url
+        }
         return URL(string: "http://localhost:8080")!
-        #else
-        // Placeholder until the production domain is fixed (Railway service of kugo0x/together_back).
-        return URL(string: "https://together-back-production.up.railway.app")!
-        #endif
     }
 
     /// Fakes instead of the API: UI tests and screenshots (`-signedIn YES`, `-signedOut YES`, `-fakeBackend YES`).
@@ -187,7 +187,7 @@ final class APIClient: Sendable {
     let vault: TokenVault?
     private let session: URLSession
     private let signedOut: @Sendable () async -> Void
-    private static let log = Logger(subsystem: "app.together", category: "api")
+    private static let log = Logger(subsystem: "app.smart-note.together", category: "api")
 
     init(baseURL: URL = APIConfig.baseURL, session: URLSession = .shared, vault: TokenVault?,
          signedOut: @escaping @Sendable () async -> Void = {}) {

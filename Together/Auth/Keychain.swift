@@ -14,7 +14,7 @@ struct KeychainError: Error, Equatable {
 
 /// The iOS Keychain (generic passwords, this device only, readable after first unlock).
 struct SystemKeychain: KeychainStore {
-    var service = "app.together.Together.session"
+    var service = "app.smart-note.together.session"
 
     private func query(_ key: String) -> [String: Any] {
         [
