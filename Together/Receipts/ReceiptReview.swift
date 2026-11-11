@@ -24,7 +24,10 @@ struct ReceiptReview: Equatable, Sendable {
 
         /// Under the name: "MLEKO OWS 1L · 2 × 3,79 · rabat −1,00".
         var detail: String? {
-            let parts = [raw, qty, discount > 0 ? "rabat −" + Money.number(discount) : nil].compactMap { $0 }
+            // A printed line often carries its own "2 x 4,99"; don't repeat it.
+            let unitPrice = qty?.components(separatedBy: "× ").last
+            let printed = raw.map { raw in unitPrice.map { raw.contains($0) || raw.contains($0.replacingOccurrences(of: ",", with: ".")) } ?? false } ?? false
+            let parts = [raw, printed ? nil : qty, discount > 0 ? "rabat −" + Money.number(discount) : nil].compactMap { $0 }
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
         }
     }

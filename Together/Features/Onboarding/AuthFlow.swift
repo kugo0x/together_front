@@ -363,8 +363,8 @@ struct AuthFormView: View {
     private func googleTapped() {
         Task {
             do {
-                let token = try await google.signIn()
-                try await session.signInWithGoogle(idToken: token)
+                let (token, nonce) = try await google.signIn()
+                try await session.signInWithGoogle(idToken: token, nonce: nonce)
             } catch let failure as AuthError {
                 if failure != .cancelled { error = failure }
             } catch {

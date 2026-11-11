@@ -24,6 +24,8 @@ struct NoteEditor: View {
     @State private var loaded = false
     @State private var confirmMove = false
     @State private var saveTask: Task<Void, Never>?
+    /// The server merged my save with the partner's (version conflict): say so until dismissed.
+    @State private var showMerged = false
     @FocusState private var focus: Field?
 
     /// Only ever the note in the active space — never shown in another one.
@@ -62,6 +64,7 @@ struct NoteEditor: View {
         .onChange(of: title) { scheduleSave() }
         .onChange(of: text) { scheduleSave() }
         .onChange(of: focus) { old, _ in dropEmptyItem(old) }
+        .onChange(of: store.noteMerges[noteID]) { _, merges in if merges != nil { adoptMerge() } }
     }
 
     // MARK: Layout
@@ -71,6 +74,12 @@ struct NoteEditor: View {
             banner(note)
                 .listRowInsets(EdgeInsets(top: TG.Space.s1, leading: TG.Space.s4, bottom: TG.Space.s2, trailing: TG.Space.s4))
                 .editorRow()
+
+            if showMerged {
+                mergedNotice
+                    .listRowInsets(EdgeInsets(top: 0, leading: TG.Space.s4, bottom: TG.Space.s2, trailing: TG.Space.s4))
+                    .editorRow()
+            }
 
             VStack(alignment: .leading, spacing: TG.Space.s2) {
                 TextField("Title", text: $title, prompt: Text("Title").foregroundStyle(TG.Colors.ink3), axis: .vertical)
@@ -151,6 +160,26 @@ struct NoteEditor: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// After a conflict: both edits are in the note now.
+    private var mergedNotice: some View {
+        HStack(alignment: .firstTextBaseline, spacing: TG.Space.s3) {
+            Text("\(store.partner?.name ?? "Your partner") edited this note at the same time. Both changes are kept — "
+                 + "yours where you typed, theirs elsewhere.")
+                .font(TG.Font.footnote)
+                .foregroundStyle(TG.Colors.warning)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("OK") { showMerged = false }
+                .font(TG.Font.footnote.weight(.semibold))
+                .foregroundStyle(TG.Colors.ink)
+                .hitArea(44)
+        }
+        .padding(.vertical, TG.Space.s2)
+        .padding(.horizontal, TG.Space.s4)
+        .background(TG.Colors.surface2, in: RoundedRectangle(cornerRadius: TG.Radius.md, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "Dismiss") { showMerged = false }
+    }
+
     private func checklistRow(_ item: ChecklistItem, in note: Note) -> some View {
         HStack(spacing: TG.Space.s3) {
             CheckCircle(checked: item.done, label: (item.done ? "Untick " : "Tick ") + (item.label.isEmpty ? "item" : item.label)) {
@@ -215,6 +244,16 @@ struct NoteEditor: View {
 
     // MARK: Text: load, autosave, merge
 
+    /// The server merged a save of mine with the partner's: take theirs for a field I haven't touched since that save,
+    /// keep what I'm typing otherwise (it saves on top of the merged version).
+    private func adoptMerge() {
+        guard let note else { return }
+        if title == base.title { title = note.title }
+        if text == base.body { text = note.body }
+        base = (note.title, note.body, note.version)
+        showMerged = true
+    }
+
     private func load() {
         guard !loaded, let note else { return }
         loaded = true
@@ -248,6 +287,7 @@ struct NoteEditor: View {
             base = (current.title, current.body, current.version)
             title = mergedTitle
             text = mergedBody
+            showMerged = true // the partner's save arrived (event stream) while I was typing
             if retry { save(retry: false) }
         case nil:
             break

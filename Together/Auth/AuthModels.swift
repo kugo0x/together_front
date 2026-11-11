@@ -34,6 +34,8 @@ enum AuthError: Error, Equatable, Sendable {
     case notConfigured(provider: AuthProvider)
     case cancelled
     case network
+    /// Any other answer from the API, with its user-facing message (`account_exists_unverified`, rate limits…).
+    case server(message: String)
 
     /// What the auth screen shows (design copy for the error state).
     var message: String? {
@@ -44,6 +46,7 @@ enum AuthError: Error, Equatable, Sendable {
         case .notConfigured(let provider): "\(provider == .apple ? "Apple" : "Google") sign-in isn’t set up in this build yet."
         case .cancelled: nil
         case .network: "Can’t reach Together. Check your connection and try again."
+        case .server(let message): message
         }
     }
 }

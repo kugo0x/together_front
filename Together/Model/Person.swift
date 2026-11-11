@@ -1,24 +1,35 @@
 import SwiftUI
 
-/// The two people in the prototype (HANDOFF §4). In the real app these become user IDs;
-/// the design system only needs a name, an initial and an identity colour.
-enum Person: String, Codable, CaseIterable, Identifiable, Sendable {
-    case alex, sam
+/// Someone in a space: a user ID from the API, their display name and which identity colour they get.
+/// Equality is by ID only — a rename doesn't make someone else.
+///
+/// `.alex` and `.sam` are the prototype's two people (HANDOFF §4) and stay as the mock data, test fixtures and
+/// `-signedIn YES` identities; signed in against the API, people come from `/v1/me` and the members list.
+struct Person: Codable, Identifiable, Hashable, Sendable {
+    /// The identity colour (`alex` / `sam` tokens). In a Shared space the owner gets the first, the partner the second.
+    enum Tint: String, Codable, Sendable { case alex, sam }
 
-    var id: String { rawValue }
+    let id: UUID
+    var name: String
+    var tint: Tint
 
-    var name: String {
-        switch self {
-        case .alex: "Alex"
-        case .sam: "Sam"
-        }
+    init(id: UUID, name: String, tint: Tint) {
+        self.id = id
+        self.name = name
+        self.tint = tint
     }
 
-    var initial: String { String(name.prefix(1)) }
+    static let alex = Person(id: UUID(uuidString: "0B0C6E0A-0000-4000-8000-00000000A1E0")!, name: "Alex", tint: .alex)
+    static let sam = Person(id: UUID(uuidString: "0B0C6E0A-0000-4000-8000-0000000005A3")!, name: "Sam", tint: .sam)
 
-    /// Identity colour (`alex` / `sam` tokens). Avatars and the attribution dot only — never buttons or backgrounds.
+    static func == (a: Person, b: Person) -> Bool { a.id == b.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+    var initial: String { name.first.map { String($0).uppercased() } ?? "?" }
+
+    /// Identity colour. Avatars and the attribution dot only — never buttons or backgrounds.
     var color: Color {
-        switch self {
+        switch tint {
         case .alex: TG.Colors.alex
         case .sam: TG.Colors.sam
         }

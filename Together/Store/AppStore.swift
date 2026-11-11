@@ -1,7 +1,10 @@
 import Foundation
 import Observation
 
-/// In-memory app state for the MVP (seeded with `MockData`); phase 9 backs it with the API.
+/// The app's state. Offline (UI tests, previews) it is seeded with `MockData`; signed in against the API it starts
+/// empty and `RemoteSync` fills it from the server, sends every change (`sync?.record`) and applies the partner's
+/// changes from the event stream. Changes are applied here first (optimistic UI) and rolled back by `RemoteSync`
+/// when the server refuses them.
 ///
 /// Views never filter the raw arrays themselves: they ask for a space (`groceries(in:)`, `tasks(in:)`, …),
 /// so a Personal item can't leak into a Shared view by a forgotten filter. Grocery methods mirror the
@@ -15,36 +18,64 @@ final class AppStore {
     var me: Person = .alex
     /// My display name (onboarding "What should we call you?", Settings). `me` stays the identity.
     var myName = "Alex"
-    /// My profile picture, picked in Settings (JPEG/PNG data; `PUT /v1/me/avatar` in phase 9).
-    var myAvatar: Data?
+    /// My profile picture, picked in Settings (JPEG/PNG data; `PUT /v1/me/avatar`).
+    var myAvatar: Data? {
+        didSet { if myAvatar != oldValue { record(.avatarChanged(myAvatar)) } }
+    }
     /// Settings → Notifications (`/v1/me/settings` `notifications`).
     var notificationPrefs = NotificationPrefs() {
-        didSet { if notificationPrefs.taskReminders != oldValue.taskReminders { resyncReminders() } }
+        didSet {
+            if notificationPrefs.taskReminders != oldValue.taskReminders { resyncReminders() }
+            if notificationPrefs != oldValue { record(.settingsChanged) }
+        }
     }
     /// The other member of the Shared space, `nil` while alone.
     var partner: Person? = .sam
     /// Settings → "Suggestions" (phase 7). Off hides the card; nothing is ever added automatically either way.
-    var suggestionsEnabled = true
+    var suggestionsEnabled = true {
+        didSet { if suggestionsEnabled != oldValue { record(.settingsChanged) } }
+    }
     /// Settings → "Shopping day", a `Calendar` weekday (1 = Sunday … 7 = Saturday).
-    var shoppingDay = 7
+    var shoppingDay = 7 {
+        didSet { if shoppingDay != oldValue { record(.shoppingDayChanged(shoppingDay)) } }
+    }
 
-    private(set) var lists: [GroceryList]
-    private(set) var groceryItems: [GroceryItem]
-    private(set) var tasks: [TaskItem]
-    private(set) var notes: [Note]
-    private(set) var trips: [Trip]
-    private(set) var suggestionsBySpace: [SpaceKind: [Suggestion]]
+    // The arrays are only written by this type and by `RemoteSync` (server state); views read them through the
+    // space-scoped accessors below so nothing Personal can leak into a Shared view.
+    var lists: [GroceryList]
+    var groceryItems: [GroceryItem]
+    var tasks: [TaskItem]
+    var notes: [Note]
+    var trips: [Trip]
+    var suggestionsBySpace: [SpaceKind: [Suggestion]]
     private(set) var sampleReceipt: [ReceiptLine]
-    @ObservationIgnored private var deletedNotes: [Note.ID: DeletedNote] = [:]
-    @ObservationIgnored private var moveUndos: [Note.ID: MoveUndo] = [:]
+    @ObservationIgnored var deletedNotes: [Note.ID: DeletedNote] = [:]
+    @ObservationIgnored var moveUndos: [Note.ID: MoveUndo] = [:]
 
-    /// Each person's do-not-disturb window (Settings later; the API keeps it per user).
-    var quietHours: [Person: QuietHours] = [.alex: .default, .sam: .default]
+    /// Each person's do-not-disturb window (Settings; the API keeps it per user).
+    var quietHours: [Person: QuietHours] = [.alex: .default, .sam: .default] {
+        didSet {
+            if let mine = quietHours[me], mine != oldValue[me] { record(.quietHoursChanged(mine)) }
+        }
+    }
+
+    /// Sends changes to the server (signed in against the API); `nil` offline (tests, previews).
+    @ObservationIgnored weak var sync: StoreSync?
+    /// True while server state is being applied: those writes aren't changes to send back.
+    @ObservationIgnored var applyingServerState = false
+    /// What the offline banner shows.
+    var connection: ConnectionState = .online
+    /// False until the first load from the server is done (the tabs show a loading state instead of "Nothing to
+    /// buy"); always true on fakes.
+    var hasLoaded = true
+    /// Notes whose title/body were merged with the partner's version after a conflict — the editor reloads them
+    /// and says so. The value changes with every merge.
+    var noteMerges: [Note.ID: Int] = [:]
 
     @ObservationIgnored private let clock: @Sendable () -> Date
     /// The zone due dates, repeats and reminders are computed in (the device's; Europe/Warsaw in tests).
     @ObservationIgnored let calendar: Calendar
-    @ObservationIgnored private let notifier: ReminderNotifying
+    @ObservationIgnored let notifier: ReminderNotifying
 
     init(
         data: MockData = .make(),
@@ -117,6 +148,7 @@ final class AppStore {
             addedBy: me
         )
         groceryItems.insert(item, at: 0)
+        record(.itemAdded(item, space))
         return item
     }
 
@@ -127,6 +159,7 @@ final class AppStore {
         groceryItems[i].name = name
         groceryItems[i].qty = qty.flatMap { Self.clean($0, max: Limits.qty) }
         groceryItems[i].note = note.flatMap { Self.clean($0, max: Limits.note) }
+        record(.itemEdited(groceryItems[i], space))
         return groceryItems[i]
     }
 
@@ -139,6 +172,7 @@ final class AppStore {
             groceryItems[i].boughtBy = me
             groceryItems[i].boughtAt = now
             groceryItems[i].viaReceipt = false
+            record(.itemBought(id, space))
         }
         return groceryItems[i]
     }
@@ -147,10 +181,12 @@ final class AppStore {
     @discardableResult
     func unmarkBought(_ id: GroceryItem.ID, in space: SpaceKind) -> GroceryItem? {
         guard let i = index(of: id, in: space) else { return nil }
+        let wasDone = groceryItems[i].done
         groceryItems[i].done = false
         groceryItems[i].boughtBy = nil
         groceryItems[i].boughtAt = nil
         groceryItems[i].viaReceipt = false
+        if wasDone { record(.itemUnbought(id, space)) }
         return groceryItems[i]
     }
 
@@ -165,13 +201,16 @@ final class AppStore {
     @discardableResult
     func removeItem(_ id: GroceryItem.ID, in space: SpaceKind) -> RemovedItem? {
         guard let i = index(of: id, in: space) else { return nil }
-        return RemovedItem(item: groceryItems.remove(at: i), space: space, index: i)
+        let removed = RemovedItem(item: groceryItems.remove(at: i), space: space, index: i)
+        record(.itemRemoved(removed.item, space))
+        return removed
     }
 
     /// Undo for `removeItem` (the API re-adds the item).
     func undoRemove(_ removed: RemovedItem) {
         guard !groceryItems.contains(where: { $0.id == removed.item.id }) else { return }
         groceryItems.insert(removed.item, at: min(removed.index, groceryItems.count))
+        record(.itemRestored(removed.item, removed.space))
     }
 
     // MARK: Suggestions — /v1/spaces/{id}/suggestions, /dismiss, /accept
@@ -184,6 +223,11 @@ final class AppStore {
 
     /// "Not this week" — hides the suggestion (for both partners on the server).
     func dismissSuggestion(named name: String, in space: SpaceKind) {
+        hideSuggestion(named: name, in: space)
+        record(.suggestionDismissed(name, space))
+    }
+
+    private func hideSuggestion(named name: String, in space: SpaceKind) {
         suggestionsBySpace[space]?.removeAll { $0.name == name }
     }
 
@@ -194,10 +238,13 @@ final class AppStore {
         let picked = suggestions(in: space).filter { names.contains($0.name) }
         let open = Set(toBuy(in: space).map { $0.name.lowercased() })
         var added: [GroceryItem] = []
-        for suggestion in picked.reversed() where !open.contains(suggestion.name.lowercased()) {
-            if let item = addItem(name: suggestion.name, qty: suggestion.qty, in: space) { added.insert(item, at: 0) }
+        withoutRecording {
+            for suggestion in picked.reversed() where !open.contains(suggestion.name.lowercased()) {
+                if let item = addItem(name: suggestion.name, qty: suggestion.qty, in: space) { added.insert(item, at: 0) }
+            }
+            for suggestion in picked { hideSuggestion(named: suggestion.name, in: space) }
         }
-        for suggestion in picked { dismissSuggestion(named: suggestion.name, in: space) }
+        if !picked.isEmpty { record(.suggestionsAccepted(picked.map(\.name), added: added, space)) }
         return added
     }
 
@@ -277,6 +324,7 @@ final class AppStore {
         apply(draft, to: &task, title: title)
         tasks.insert(task, at: 0)
         syncNotification(task)
+        record(.taskCreated(task, draft))
         return task
     }
 
@@ -284,8 +332,10 @@ final class AppStore {
     @discardableResult
     func updateTask(_ id: TaskItem.ID, in space: SpaceKind, with draft: TaskDraft) -> TaskItem? {
         guard let i = taskIndex(id, in: space), let title = Self.clean(draft.title, max: Limits.taskTitle) else { return nil }
+        let before = tasks[i]
         apply(draft, to: &tasks[i], title: title)
         syncNotification(tasks[i])
+        record(.taskEdited(tasks[i], draft, before: before))
         return tasks[i]
     }
 
@@ -294,6 +344,7 @@ final class AppStore {
     @discardableResult
     func completeTask(_ id: TaskItem.ID, in space: SpaceKind) -> TaskCompletion? {
         guard let i = taskIndex(id, in: space), !tasks[i].done else { return nil }
+        let before = tasks[i]
         let now = now
         tasks[i].lastDoneAt = now
         tasks[i].lastDoneBy = me
@@ -311,6 +362,7 @@ final class AppStore {
             tasks[i].doneAt = now
         }
         syncNotification(tasks[i])
+        record(.taskCompleted(before))
         return TaskCompletion(task: tasks[i], rolled: rolled, days: days)
     }
 
@@ -332,6 +384,7 @@ final class AppStore {
             return nil
         }
         syncNotification(tasks[i])
+        record(.taskReopened(tasks[i]))
         return tasks[i]
     }
 
@@ -341,6 +394,7 @@ final class AppStore {
         guard let i = taskIndex(id, in: space) else { return nil }
         let task = tasks.remove(at: i)
         notifier.cancel(id: task.id.uuidString)
+        record(.taskDeleted(task))
         return RemovedTask(task: task, index: i)
     }
 
@@ -348,6 +402,7 @@ final class AppStore {
         guard !tasks.contains(where: { $0.id == removed.task.id }) else { return }
         tasks.insert(removed.task, at: min(removed.index, tasks.count))
         syncNotification(removed.task)
+        record(.taskRestored(removed.task))
     }
 
     /// Plans a reminder for the sheet's preview and for saving: quiet hours of the recipient applied.
@@ -414,6 +469,7 @@ final class AppStore {
             createdBy: me
         )
         notes.append(note)
+        record(.noteCreated(note))
         return note
     }
 
@@ -423,10 +479,12 @@ final class AppStore {
     ) -> Result<Note, NoteConflict>? {
         guard let i = noteIndex(id, in: space) else { return nil }
         guard notes[i].version == version else { return .failure(NoteConflict(current: notes[i])) }
+        let base = notes[i]
         notes[i].title = String(title.prefix(Limits.noteTitle))
         notes[i].body = String(body.prefix(Limits.noteBody))
         notes[i].version += 1
         touch(i)
+        record(.noteEdited(notes[i], base: base))
         return .success(notes[i])
     }
 
@@ -436,6 +494,7 @@ final class AppStore {
         guard let i = noteIndex(id, in: space) else { return nil }
         let deleted = DeletedNote(note: notes.remove(at: i), restoreUntil: now.addingTimeInterval(3600))
         deletedNotes[id] = deleted
+        record(.noteDeleted(deleted.note))
         return deleted
     }
 
@@ -445,6 +504,7 @@ final class AppStore {
         guard let deleted = deletedNotes[id], deleted.note.space == space, now <= deleted.restoreUntil else { return nil }
         deletedNotes[id] = nil
         notes.append(deleted.note)
+        record(.noteRestored(deleted.note))
         return deleted.note
     }
 
@@ -458,6 +518,7 @@ final class AppStore {
             touch(i)
             let undo = MoveUndo(noteID: id, backTo: .personal, until: now.addingTimeInterval(600))
             moveUndos[id] = undo
+            record(.noteMoved(notes[i], from: space))
             return (notes[i], undo)
         }
         // Back to Personal: only as the Undo of my own move, in time.
@@ -465,6 +526,7 @@ final class AppStore {
         moveUndos[id] = nil
         notes[i].space = target
         touch(i)
+        record(.noteMoved(notes[i], from: space))
         return (notes[i], nil)
     }
 
@@ -478,6 +540,7 @@ final class AppStore {
         let at = min(max(position ?? notes[i].checklist.count, 0), notes[i].checklist.count)
         notes[i].checklist.insert(item, at: at)
         touch(i)
+        record(.checklistAdded(item, note: id, at: at, space))
         return item
     }
 
@@ -501,6 +564,7 @@ final class AppStore {
             notes[i].checklist.insert(item, at: j)
         }
         touch(i)
+        record(.checklistEdited(itemID, note: noteID, text: text, done: done, position: position, space))
         return notes[i].checklist[j]
     }
 
@@ -511,6 +575,7 @@ final class AppStore {
               let j = notes[i].checklist.firstIndex(where: { $0.id == itemID }) else { return nil }
         let item = notes[i].checklist.remove(at: j)
         touch(i)
+        record(.checklistDeleted(itemID, note: noteID, space))
         return item
     }
 
@@ -560,7 +625,14 @@ final class AppStore {
             }
         )
         trips.append(trip)
+        record(.receiptConfirmed(review, trip: trip, space))
         return (trip, bought)
+    }
+
+    /// The receipt lines of a trip from the server (History lists trips without them); nothing to do offline.
+    func loadLines(of tripID: Trip.ID) async {
+        guard let trip = trips.first(where: { $0.id == tripID }), trip.lines.isEmpty, trip.hasReceipt else { return }
+        await sync?.loadLines(of: tripID)
     }
 
     /// History: the space's trips by month, newest first — GET /v1/spaces/{id}/trips?month=.
@@ -585,10 +657,17 @@ final class AppStore {
     /// Someone joined my Shared space (or I joined theirs).
     func joinPartner(_ person: Person) {
         partner = person
+        Task { await sync?.spacesChanged() }
+    }
+
+    /// The Shared space was created (first invite) — the server knows it before the store does.
+    func sharedSpaceCreated() async {
+        await sync?.spacesChanged()
     }
 
     /// Leave the Shared space: everything in it stays with the partner; I keep only Personal.
     func leaveShared() {
+        record(.leftShared)
         partner = nil
         let sharedList = defaultList(for: .shared).id
         groceryItems.removeAll { $0.listID == sharedList }
@@ -602,6 +681,31 @@ final class AppStore {
     /// Re-checks every task's local notification (after a settings change).
     func resyncReminders() {
         for task in tasks { syncNotification(task) }
+    }
+
+    // MARK: Sync
+
+    private func record(_ change: StoreChange) {
+        guard !applyingServerState, !recordingPaused else { return }
+        sync?.record(change)
+    }
+
+    @ObservationIgnored private var recordingPaused = false
+
+    /// Runs `body` without sending its changes (they are sent as one change by the caller).
+    private func withoutRecording(_ body: () -> Void) {
+        let paused = recordingPaused
+        recordingPaused = true
+        body()
+        recordingPaused = paused
+    }
+
+    /// Applies server state without sending it back.
+    func applyingServer(_ body: () -> Void) {
+        let applying = applyingServerState
+        applyingServerState = true
+        body()
+        applyingServerState = applying
     }
 
     // MARK: Private
@@ -661,7 +765,7 @@ final class AppStore {
     }
 
     /// Keeps the local notification in step with the task: only my own pending reminders, one per task id.
-    private func syncNotification(_ task: TaskItem) {
+    func syncNotification(_ task: TaskItem) {
         let id = task.id.uuidString
         guard notificationPrefs.taskReminders,
               !task.done, let reminder = task.reminder, reminder.recipient == me, reminder.remindAt > now else {

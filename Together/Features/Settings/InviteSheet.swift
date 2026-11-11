@@ -99,6 +99,7 @@ struct InviteSheet: View {
         dismiss()
         toasts.show("Invite sent")
         Task {
+            await store.sharedSpaceCreated()
             guard let partner = try? await invites.waitForJoin(invite) else { return }
             store.joinPartner(partner)
             toasts.show("\(partner.name) joined your Shared space", person: partner)

@@ -46,9 +46,13 @@ final class Session {
     /// Set by `finishOnboarding`; the shell takes it (and clears it).
     var arrival: Arrival?
 
-    @ObservationIgnored private var tokens: AuthTokens?
+    @ObservationIgnored private(set) var tokens: AuthTokens?
     @ObservationIgnored private let service: AuthService
     @ObservationIgnored private let keychain: KeychainStore
+    /// Holds the tokens the API client sends (signed in against the API); `nil` with the fakes.
+    @ObservationIgnored var vault: TokenVault?
+    /// Why the session ended on its own (refresh token expired or revoked) — the welcome screen says so once.
+    var endedMessage: String?
 
     init(service: AuthService, keychain: KeychainStore) {
         self.service = service
@@ -72,8 +76,8 @@ final class Session {
         }
     }
 
-    func signInWithGoogle(idToken: String) async throws {
-        try await run { try await self.service.signInWithGoogle(idToken: idToken) }
+    func signInWithGoogle(idToken: String, nonce: String) async throws {
+        try await run { try await self.service.signInWithGoogle(idToken: idToken, nonce: nonce) }
     }
 
     func forgotPassword(email: String) async throws {
@@ -106,9 +110,13 @@ final class Session {
     // MARK: Sign out
 
     func logout() async {
+        await willSignOut?()
         if let tokens { try? await service.logout(tokens: tokens) }
         clear()
     }
+
+    /// Runs before signing out while the session still works (forget this phone's push token).
+    @ObservationIgnored var willSignOut: (() async -> Void)?
 
     func deleteAccount() async throws {
         if let tokens { try await service.deleteAccount(tokens: tokens) }
@@ -125,7 +133,31 @@ final class Session {
     private func run(_ call: @escaping () async throws -> AuthResult) async throws {
         isBusy = true
         defer { isBusy = false }
-        apply(try await call())
+        let result = try await call()
+        await vault?.set(result.tokens)
+        apply(result)
+    }
+
+    /// The API client rotated the tokens (or found the session over): store the new pair at once — the old
+    /// refresh token no longer works.
+    func tokensRotated(_ fresh: AuthTokens?) {
+        guard let fresh else { return signedOutByServer() }
+        tokens = fresh
+        save()
+    }
+
+    /// A 401 that a refresh couldn't fix: back to the welcome screen, saying why.
+    func signedOutByServer() {
+        guard state != .signedOut else { return }
+        endedMessage = "You’ve been signed out. Sign in again to continue."
+        clear()
+    }
+
+    /// Picks up profile changes made elsewhere (the name, from the other phone).
+    func refreshUser(_ user: AuthUser) {
+        guard self.user != nil else { return }
+        self.user = user
+        save()
     }
 
     private func apply(_ result: AuthResult) {
@@ -149,6 +181,12 @@ final class Session {
         }
     }
 
+    /// The tokens a previous launch saved, before a `Session` exists (the API client starts with them).
+    static func storedTokens(in keychain: KeychainStore) -> AuthTokens? {
+        guard let data = try? keychain.data(for: keychainKey) else { return nil }
+        return (try? JSONDecoder().decode(Stored.self, from: data))?.tokens
+    }
+
     private func restore() {
         guard let data = try? keychain.data(for: Self.keychainKey),
               let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return }
@@ -162,5 +200,6 @@ final class Session {
         user = nil
         tokens = nil
         state = .signedOut
+        if let vault { Task { await vault.set(nil) } }
     }
 }

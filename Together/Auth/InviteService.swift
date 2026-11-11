@@ -12,11 +12,14 @@ enum InviteError: Error, Equatable {
     case invalidCode
     /// 404 `invite_not_found` — no such code, or it expired.
     case notFound
+    /// Anything else the API said (`already_in_shared_space`, `own_invite`…), in its words.
+    case server(message: String)
 
     var message: String {
         switch self {
         case .invalidCode: "Codes look like TGT-7KQ2."
         case .notFound: "That code didn’t work. Ask for a new invite."
+        case .server(let message): message
         }
     }
 }

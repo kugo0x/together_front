@@ -9,8 +9,8 @@ protocol AuthService: Sendable {
     func login(email: String, password: String) async throws -> AuthResult
     /// POST /v1/auth/apple — identity token + the RAW nonce; the name only comes on the first sign-in.
     func signInWithApple(identityToken: String, nonce: String, displayName: String?) async throws -> AuthResult
-    /// POST /v1/auth/google — the Google ID token.
-    func signInWithGoogle(idToken: String) async throws -> AuthResult
+    /// POST /v1/auth/google — the Google ID token and the raw nonce it was issued for.
+    func signInWithGoogle(idToken: String, nonce: String) async throws -> AuthResult
     /// POST /v1/auth/password/forgot — always succeeds (no account enumeration).
     func forgotPassword(email: String) async throws
     /// PATCH /v1/me { display_name }.
@@ -33,7 +33,7 @@ actor FakeAuthService: AuthService {
     private let clock: @Sendable () -> Date
 
     /// The seeded account (also what `-signedIn YES` starts as).
-    static let alex = AuthUser(id: UUID(uuidString: "0B0C6E0A-0000-4000-8000-00000000A1E0")!,
+    static let alex = AuthUser(id: Person.alex.id,
                                email: "alex@example.com", displayName: "Alex", providers: [.email])
     static let alexPassword = "together123"
 
@@ -67,7 +67,7 @@ actor FakeAuthService: AuthService {
         try await social(.apple, key: "apple:" + identityToken, name: displayName)
     }
 
-    func signInWithGoogle(idToken: String) async throws -> AuthResult {
+    func signInWithGoogle(idToken: String, nonce: String) async throws -> AuthResult {
         try await social(.google, key: "google:" + idToken, name: nil)
     }
 
