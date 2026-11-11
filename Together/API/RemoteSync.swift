@@ -30,7 +30,7 @@ final class RemoteSync: StoreSync {
     private var streams: [SpaceKind: SpaceEventStream] = [:]
     private let path = NWPathMonitor()
     private let pending: PendingGroceries
-    private static let log = Logger(subsystem: "app.together", category: "sync")
+    private static let log = Logger(subsystem: "app.smart-note.together", category: "sync")
 
     /// The latest load, for whoever waits on it (the receipt recognizer needs space IDs).
     private(set) var loaded = false

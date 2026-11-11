@@ -11,7 +11,7 @@ final class SpaceEventStream {
     private let onEvent: @MainActor (SpaceEventDTO) -> Void
     private let reconnected: @MainActor () async -> Void
     private var task: Task<Void, Never>?
-    private static let log = Logger(subsystem: "app.together", category: "events")
+    private static let log = Logger(subsystem: "app.smart-note.together", category: "events")
 
     init(client: APIClient, spaceID: UUID,
          onEvent: @escaping @MainActor (SpaceEventDTO) -> Void,

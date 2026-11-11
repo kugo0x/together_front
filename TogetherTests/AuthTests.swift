@@ -83,7 +83,7 @@ struct KeychainTests {
 
     /// The real Keychain, in the simulator's test host, under a throwaway service name.
     @Test func systemKeychainRoundTrip() throws {
-        let keychain = SystemKeychain(service: "app.together.tests.\(UUID().uuidString)")
+        let keychain = SystemKeychain(service: "app.smart-note.together.tests.\(UUID().uuidString)")
         defer { try? keychain.remove("session") }
         #expect(try keychain.data(for: "session") == nil)
         try keychain.set(Data("a".utf8), for: "session")

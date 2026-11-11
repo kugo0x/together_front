@@ -50,7 +50,7 @@ final class PushRegistration {
     static var current: PushRegistration?
     private var client: APIClient?
     private(set) var token: String?
-    private static let log = Logger(subsystem: "app.together", category: "push")
+    private static let log = Logger(subsystem: "app.smart-note.together", category: "push")
 
     /// Signed in: ask iOS for a token (it arrives in the app delegate).
     func start(client: APIClient) {
@@ -93,7 +93,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        Logger(subsystem: "app.together", category: "push")
+        Logger(subsystem: "app.smart-note.together", category: "push")
             .info("no APNs token: \(error.localizedDescription, privacy: .public)")
     }
 }

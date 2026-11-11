@@ -18,7 +18,7 @@ final class ToastCenter {
     typealias Sleep = @Sendable (Duration) async throws -> Void
 
     static let duration: Duration = .milliseconds(3800)
-    private static let log = Logger(subsystem: "app.together.Together", category: "toast")
+    private static let log = Logger(subsystem: "app.smart-note.together", category: "toast")
 
     private(set) var current: Item?
     @ObservationIgnored private var hideTask: Task<Void, Never>?
