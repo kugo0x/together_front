@@ -221,7 +221,7 @@ struct RemoteSyncEventTests {
         let toasts = ToastCenter()
         let me = Person.alex
         let sync = RemoteSync(client: APIClient(baseURL: URL(string: "https://api.test")!, vault: nil), store: store,
-                              toasts: toasts, me: me)
+                              toasts: toasts, me: me, cachesLoads: false)
         defer { sync.stop() }
         let list = store.defaultList(for: .shared)
         let itemID = UUID()

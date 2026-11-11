@@ -65,7 +65,7 @@ struct APILiveTests {
         /// Loads everything, like the app after sign-in; `stream` opens the event streams.
         func open(stream: Bool = false) async {
             sync = RemoteSync(client: client, store: store, toasts: toasts,
-                              me: Person(id: user.id, name: user.displayName, tint: .alex))
+                              me: Person(id: user.id, name: user.displayName, tint: .alex), cachesLoads: false)
             await sync.loadAll()
             if stream { sync.setForeground(true) }
         }
@@ -200,7 +200,7 @@ struct APILiveTests {
         let offlineClient = APIClient(baseURL: URL(string: "http://127.0.0.1:9")!, vault: offlineVault)
         let store = AppStore(data: .empty)
         let me = Person(id: alex.user.id, name: alex.user.displayName, tint: .alex)
-        let offline = RemoteSync(client: offlineClient, store: store, toasts: ToastCenter(), me: me)
+        let offline = RemoteSync(client: offlineClient, store: store, toasts: ToastCenter(), me: me, cachesLoads: false)
         await offline.loadAll()
         #expect(store.connection == .offline(pending: 0))
         let name = Self.unique("Offline bread")

@@ -36,7 +36,9 @@ Railway service. The URL comes from one place: the `API_BASE_URL` build setting 
   retry, any other 401 → signed out. Logs method, path, status and request ID only.
 - `APIModels.swift` — wire models, checked against the spec by `APISpecTests` (copy of the spec in
   `TogetherTests/Resources/openapi.json`; refresh it with `scripts/update-openapi.sh` after the backend changes it).
-- `RemoteSync.swift` — fills `AppStore` from the server and sends every change in order. Changes show at once
+- `RemoteSync.swift` — fills `AppStore` from the server (requests in parallel; the last load is kept on disk by
+  `SyncCache.swift` and shown at once on the next launch, removed at sign-out; partner events heard during a load
+  are applied again on top of it) and sends every change in order. Changes show at once
   (optimistic); a refused one is undone, the space re-fetched and a toast says why. Offline, changes wait (the banner
   says so; grocery items typed offline are kept on disk until sent). While in the foreground each space's event
   stream applies the partner's changes ("Sam bought Tomatoes") and re-fetches after a reconnect.

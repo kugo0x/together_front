@@ -11,6 +11,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     /// Signed in against the API: keeps the store and the server in step.
     @State private var sync: RemoteSync?
+    @State private var wasInBackground = false
     private let toasts: ToastCenter
     @State private var showSettings = false
     @State private var showInvite = false
@@ -89,8 +90,21 @@ struct RootView: View {
         .task { await startSync() }
         .onChange(of: scenePhase) { _, phase in
             guard let sync else { return }
-            sync.setForeground(phase == .active)
-            if phase == .active { Task { await sync.loadAll() } }
+            // Only a real trip to the background closes the streams and re-fetches on return; pulling down
+            // Control Center or the notification shade (inactive) keeps everything as it is.
+            switch phase {
+            case .background:
+                wasInBackground = true
+                sync.setForeground(false)
+            case .active:
+                sync.setForeground(true)
+                if wasInBackground {
+                    wasInBackground = false
+                    Task { await sync.loadAll() }
+                }
+            default:
+                break
+            }
         }
         .onDisappear { sync?.stop() }
         .task {
