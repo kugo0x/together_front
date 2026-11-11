@@ -1,0 +1,5138 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Together API",
+    "version": "0.8.0",
+    "description": "Foundation endpoints: auth, profile, spaces, invites.\n\n* All bodies are JSON. Unknown fields are rejected (`400 invalid_json`).\n* Errors always look like `{\"error\": {\"code\": \"...\", \"message\": \"...\"}}`. Clients branch on\n  `code`; `message` is user-facing English copy.\n* Authenticated endpoints take `Authorization: Bearer <access_token>`. On `401` with\n  `invalid_access_token` call `/v1/auth/refresh` once and retry; on any other `401` sign the user out.\n* A space you can't access answers `404 space_not_found` (never 403): other people's\n  spaces, and especially their Personal space, don't exist as far as you know.\n* Limits: any endpoint may answer `429 rate_limited` with `Retry-After` (600 requests/min per\n  address; stricter on sign-in, sign-up, password reset, invite codes, avatar upload and event\n  streams). Bodies over 21 MB get `413 body_too_large`. Creating beyond a space's caps (500 open\n  grocery items, 20 lists, 1000 open tasks, 5000 notes) answers `409 limit_reached`. A list\n  returns its newest 200 bought items; the notes list returns the newest 500 (search finds older).\n  Receipt scans: 30 per person per day, `POST /receipts/scan` bodies up to 20 MB.\n* Every response is `Cache-Control: no-store` (avatars: `private, max-age=300`). There is no CORS:\n  the API is for the native app.\n"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080"
+    }
+  ],
+  "security": [
+    {
+      "bearer": [
+
+      ]
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Health (process up and database reachable) — deploy healthcheck",
+        "security": [
+
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable (`db_unavailable`)"
+          }
+        }
+      }
+    },
+    "/livez": {
+      "get": {
+        "summary": "Liveness only (no dependency checks)",
+        "security": [
+
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/register": {
+      "post": {
+        "summary": "Sign up with email + password",
+        "description": "Creates the user, their Personal space and a session, and emails a verification link.",
+        "security": [
+
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 256
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "maxLength": 50
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "201": {
+            "$ref": "#/components/responses/AuthResult"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`email_taken`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "`validation_failed`"
+          }
+        }
+      }
+    },
+    "/v1/auth/login": {
+      "post": {
+        "summary": "Sign in with email + password",
+        "security": [
+
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "200": {
+            "$ref": "#/components/responses/AuthResult"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invalid_credentials`"
+          }
+        }
+      }
+    },
+    "/v1/auth/apple": {
+      "post": {
+        "summary": "Sign in / up with Apple",
+        "description": "Send the `identityToken` from `ASAuthorizationAppleIDCredential` and the **raw** nonce whose SHA-256\nyou passed to Apple. Apple only shares the name on first sign-in: pass it as `display_name`.\nLinking: a known Apple account signs in; otherwise a verified email matching a verified Together\naccount is linked to it; matching an *unverified* account returns `409 account_exists_unverified`;\notherwise a new user (+ Personal space) is created with `201`.\n",
+        "security": [
+
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/IDToken"
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "200": {
+            "$ref": "#/components/responses/AuthResult"
+          },
+          "201": {
+            "$ref": "#/components/responses/AuthResult"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invalid_id_token`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`account_exists_unverified`, `provider_already_linked`"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "`provider_not_configured`"
+          }
+        }
+      }
+    },
+    "/v1/auth/google": {
+      "post": {
+        "summary": "Sign in / up with Google",
+        "description": "Same as `/v1/auth/apple` with the Google `idToken`; the nonce (if any) is sent raw.",
+        "security": [
+
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/IDToken"
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "200": {
+            "$ref": "#/components/responses/AuthResult"
+          },
+          "201": {
+            "$ref": "#/components/responses/AuthResult"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invalid_id_token`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`account_exists_unverified`, `provider_already_linked`"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error",
+            "description": "`provider_not_configured`"
+          }
+        }
+      }
+    },
+    "/v1/auth/refresh": {
+      "post": {
+        "summary": "Rotate the refresh token",
+        "description": "Every refresh token works once. Store the new pair atomically. Replaying an already used token\nrevokes the whole session (`refresh_token_reused`) — never retry a refresh with the old token.\n",
+        "security": [
+
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "refresh_token"
+                ],
+                "properties": {
+                  "refresh_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "200": {
+            "description": "New token pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tokens"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invalid_refresh_token`, `refresh_token_reused`"
+          }
+        }
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "summary": "Sign out this device (revokes the session)",
+        "responses": {
+          "204": {
+            "description": "Signed out"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/auth/logout-all": {
+      "post": {
+        "summary": "Sign out every device",
+        "responses": {
+          "204": {
+            "description": "Signed out everywhere"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/auth/email/verify": {
+      "post": {
+        "summary": "Confirm email with the token from the link `{PUBLIC_BASE_URL}/verify-email?token=…`",
+        "security": [
+
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "204": {
+            "description": "Verified"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invalid_token` (unknown, used or expired)"
+          }
+        }
+      }
+    },
+    "/v1/auth/email/resend": {
+      "post": {
+        "summary": "Send a new verification email (invalidates the previous link)",
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "202": {
+            "description": "Accepted (no-op if already verified)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/auth/password/forgot": {
+      "post": {
+        "summary": "Email a password reset link",
+        "description": "Always `202`, whether or not the account exists. Link `{PUBLIC_BASE_URL}/reset-password?token=…`, valid 1 h.",
+        "security": [
+
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted"
+          }
+        }
+      }
+    },
+    "/v1/auth/password/reset": {
+      "post": {
+        "summary": "Set a new password from a reset token",
+        "description": "Also marks the email verified, adds a password to Apple/Google-only accounts, and signs out every device.",
+        "security": [
+
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "password"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 256
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "204": {
+            "description": "Password changed — sign in again"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invalid_token`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "`validation_failed`"
+          }
+        }
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "summary": "Current user",
+        "responses": {
+          "200": {
+            "description": "Me",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update profile (onboarding \"name\" step, time zone, quiet hours)",
+        "description": "Send the device's IANA time zone on launch; reminders and quiet hours use it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "display_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 50
+                  },
+                  "time_zone": {
+                    "type": "string",
+                    "example": "Europe/Warsaw"
+                  },
+                  "quiet_hours": {
+                    "$ref": "#/components/schemas/QuietHours"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Me",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete the account",
+        "description": "Deletes the user and everything Personal (tasks, notes, lists, avatar, devices). The user leaves their Shared\nspace: the partner keeps it and its content and becomes owner; a Shared space left empty is deleted. All\nsessions end. If the account uses Sign in with Apple, run a fresh Apple sign-in first and send its\n`authorizationCode`: the server revokes the Apple grant (Apple's rule) and stops with `502\napple_revoke_failed` if that fails, so you can retry.\n",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apple_authorization_code": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "502": {
+            "$ref": "#/components/responses/Error",
+            "description": "`apple_revoke_failed`"
+          }
+        }
+      }
+    },
+    "/v1/me/identities/{provider}": {
+      "post": {
+        "summary": "Link Apple or Google to the signed-in account",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "apple",
+                "google"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/IDToken"
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "200": {
+            "description": "Me",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`unknown_provider`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`identity_in_use`, `provider_already_linked`"
+          }
+        }
+      }
+    },
+    "/v1/spaces": {
+      "get": {
+        "summary": "My spaces (Personal first)",
+        "responses": {
+          "200": {
+            "description": "Spaces",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "spaces": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MySpace"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create the Shared space",
+        "description": "A user can be in at most one Shared space. Only `kind=shared` can be created.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 40,
+                    "default": "Shared"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "shared"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MySpace"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`shared_space_exists`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "summary": "One space",
+        "responses": {
+          "200": {
+            "description": "Space",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MySpace"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Rename a Shared space and/or set its shopping day (merge patch, null clears)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 40,
+                    "description": "Shared only"
+                  },
+                  "shopping_day": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Space",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MySpace"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/members": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "summary": "Members (owner first)",
+        "responses": {
+          "200": {
+            "description": "Members",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Member"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/leave": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "post": {
+        "summary": "Leave a Shared space",
+        "description": "If the owner leaves, the partner becomes owner. The last member leaving deletes the space.",
+        "responses": {
+          "204": {
+            "description": "Left"
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`cannot_leave_personal`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/invites": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "post": {
+        "summary": "Create an invite (code TGT-XXXX + universal link)",
+        "description": "One live invite per space — creating a new one revokes the previous one. Expires after 7 days.",
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "201": {
+            "description": "Invite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Invite"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`personal_space_not_shareable`, `space_full`"
+          }
+        }
+      },
+      "get": {
+        "summary": "Invites of the space (latest 50)",
+        "responses": {
+          "200": {
+            "description": "Invites",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invites": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Invite"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/invites/{inviteID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "name": "inviteID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "delete": {
+        "summary": "Revoke a pending invite",
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `invite_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/invites/{code}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Code"
+        }
+      ],
+      "get": {
+        "summary": "Preview an invite before accepting",
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "200": {
+            "description": "Preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitePreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invite_not_found`"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invite_expired`, `invite_not_pending`"
+          }
+        }
+      }
+    },
+    "/v1/invites/{code}/accept": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Code"
+        }
+      ],
+      "post": {
+        "summary": "Accept — join the Shared space",
+        "description": "The inviter gets \"Sam joined your Shared space\" (push after their quiet hours) and the space stream emits `space.member_joined`.",
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "200": {
+            "description": "Joined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "space": {
+                      "$ref": "#/components/schemas/Space"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invite_not_found`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`own_invite`, `already_member`, `already_in_shared_space`, `space_full`"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invite_expired`, `invite_not_pending`"
+          }
+        }
+      }
+    },
+    "/v1/invites/{code}/decline": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Code"
+        }
+      ],
+      "post": {
+        "summary": "Decline — the code stops working",
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "204": {
+            "description": "Declined"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invite_not_found`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`own_invite` (members revoke instead)"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error",
+            "description": "`invite_expired`, `invite_not_pending`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/lists": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Lists of the space (default first, with counters)",
+        "description": "The MVP UI shows only the default list; the API supports many.",
+        "responses": {
+          "200": {
+            "description": "Lists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "lists": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GroceryList"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Create a list",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 40
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`limit_reached`"
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroceryList"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/lists/{listID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ListID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "A list with all its items (to buy first, newest first; then bought, most recent first)",
+        "responses": {
+          "200": {
+            "description": "List and items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "list": {
+                      "$ref": "#/components/schemas/GroceryList"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GroceryItem"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `list_not_found`"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Rename and/or make it the default list",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "is_default": {
+                    "type": "boolean",
+                    "const": true,
+                    "description": "Moves the default flag to this list"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroceryList"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `list_not_found`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Delete a list and its items (purchase history stays)",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `list_not_found`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`cannot_delete_default_list`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/lists/{listID}/items": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ListID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Items of a list",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "open",
+                "bought"
+              ],
+              "default": "all"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GroceryItem"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `list_not_found`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Add an item",
+        "description": "Send `text` from the quick-add field (\"2 oat milk\" → name \"Oat milk\", qty \"2\"; same rule as the\nclient's parseQty), or explicit `name` / `qty` / `note`. Emits `item.added`.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "example": "2 oat milk"
+                  },
+                  "name": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "qty": {
+                    "type": "string",
+                    "maxLength": 20,
+                    "example": "1 kg"
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 140,
+                    "example": "For Sunday’s pasta"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`limit_reached`"
+          },
+          "201": {
+            "description": "Added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroceryItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `list_not_found`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/items/{itemID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ItemID"
+        }
+      ],
+      "patch": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Edit an item (empty qty/note clears it; list_id moves it within the space)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "qty": {
+                    "type": "string",
+                    "maxLength": 20
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 140
+                  },
+                  "list_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroceryItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `item_not_found`, `list_not_found`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Remove an item (the client offers Undo by re-adding; no confirm)",
+        "description": "A tick not yet filed into a trip is removed from history too.",
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `item_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/items/{itemID}/bought": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ItemID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Mark bought (\"Sam bought this\") — idempotent, records a purchase, emits `item.bought`",
+        "responses": {
+          "200": {
+            "description": "Item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroceryItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `item_not_found`"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Undo the tick, emits `item.unbought`",
+        "responses": {
+          "200": {
+            "description": "Item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroceryItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `item_not_found`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`item_in_trip` — already filed into a trip"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/trips": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "History — trips of a month plus the month money line",
+        "parameters": [
+          {
+            "name": "month",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}$",
+              "example": "2026-11"
+            },
+            "description": "Default current month"
+          },
+          {
+            "name": "tz",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "Europe/Warsaw"
+            },
+            "description": "IANA zone for month boundaries"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "History",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "month": {
+                      "$ref": "#/components/schemas/MonthSummary"
+                    },
+                    "previous_month": {
+                      "$ref": "#/components/schemas/MonthSummary"
+                    },
+                    "trips": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Trip"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Finish a trip — file ticks not yet in a trip (all, or `purchase_ids`)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "shopped_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "total_grosze": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000000,
+                    "example": 7840,
+                    "description": "PLN in grosze: 7840 = 78,40 zł"
+                  },
+                  "merchant": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "purchase_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Trip",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trip"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `purchase_not_found`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`nothing_to_record`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/trips/{tripID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "name": "tripID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "One trip with its lines",
+        "responses": {
+          "200": {
+            "description": "Trip",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trip"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `trip_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/receipts/match": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Review a receipt (read-only)",
+        "description": "For lines you already have as text (`POST /receipts/scan` reads photos). The server matches them against open items and\nticks of the last 24 h not yet in a trip. `matched` → will be marked bought, `extra` → history only,\n`unclear` → unreadable or ambiguous, with `did_you_mean` when there is a plausible item.\nNothing changes until `POST /receipts`.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "lines"
+                ],
+                "properties": {
+                  "lines": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "items": {
+                      "$ref": "#/components/schemas/ReceiptLineIn"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReceiptLineMatch"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/receipts/scan": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Scan a receipt from 1–5 photos (read-only review)",
+        "description": "Upload 1–5 photos of ONE receipt as `multipart/form-data`, each in an `image` part, top to bottom\n(a long receipt photographed in parts; consecutive parts may overlap). Different receipts are\nseparate scans. JPEG, PNG or HEIC; at most 8 MB and 50 MP per photo, 20 MB in all.\n\nThe server re-encodes each photo (orientation applied, long edge ≤ 2576 px, ≤ 3.75 MP, EXIF/GPS\nremoved) and sends them in one request to the Claude API, which returns merchant, date, total and\nthe product lines (lines repeated in an overlap come back once; \"rabat\"/\"opust\" lines are applied\nto the product above; weighed goods keep their weight). The lines are then reviewed exactly like\n`POST /receipts/match`: `matched` / `extra` / `unclear` with `did_you_mean`. A line the recognizer\nis unsure about (`unclear: true`) is never `matched`; its candidate is offered as `did_you_mean`.\n\n**Nothing is saved and nothing is marked bought.** Send the reviewed lines (`name`, `qty`,\n`price_grosze`, plus `item_id` / `purchase_id`) to `POST /receipts` to apply them.\n`total_matches: false` means the lines don't add up to the printed total — ask the person to\ncheck the prices.\n\n**Privacy:** the photos are processed in memory and never stored or logged; neither is the\nreceipt text. They are sent to Anthropic (Claude API) for recognition only.\n\nLimits: 30 scans per person per day (a scan counts once, whatever the number of photos; rejected\nuploads don't count) → `429 rate_limited` with `Retry-After`. A scan takes about 10–40 s; use a\nlong client timeout (≥ 100 s).\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "image"
+                ],
+                "properties": {
+                  "image": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    },
+                    "description": "Repeat the `image` part for each photo, in order (top of the receipt first)."
+                  }
+                }
+              },
+              "encoding": {
+                "image": {
+                  "contentType": "image/jpeg, image/png, image/heic, image/heif"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The recognized receipt, reviewed against the list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptScan"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error",
+            "description": "`image_required` — no `image` part"
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error",
+            "description": "`image_too_large` — over 8 MB / 50 MP per photo or 20 MB in all"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error",
+            "description": "`unsupported_image` — not JPEG, PNG or HEIC"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "`too_many_images` (more than 5), `bad_image` (can't be decoded), `not_a_receipt`, `receipt_unreadable` (nothing legible — retake a sharper, flatter photo), `receipt_too_long` (split it into more photos)"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "description": "`receipt_scan_unavailable` — the recognizer is overloaded or timed out (after retries); try again after `Retry-After`. `receipt_scan_disabled` — scanning isn't configured on this server.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/receipts": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Confirm a reviewed receipt (\"Mark 5 as bought\")",
+        "description": "Send only the included lines. `item_id` marks that open item bought via receipt; `purchase_id` files\nan existing tick; neither = extra (history only). Everything lands in one trip with `via_receipt`.\n`total_grosze` defaults to the sum of line prices when all lines have one.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "lines"
+                ],
+                "properties": {
+                  "lines": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "items": {
+                      "$ref": "#/components/schemas/ReceiptLineIn"
+                    }
+                  },
+                  "total_grosze": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000000
+                  },
+                  "merchant": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "shopped_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Trip and the items now bought",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "trip": {
+                      "$ref": "#/components/schemas/Trip"
+                    },
+                    "bought": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GroceryItem"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `item_not_found`, `purchase_not_found`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`item_in_trip`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/suggestions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "What you usually buy and is due now (at most 4, never added automatically)",
+        "responses": {
+          "200": {
+            "description": "Suggestions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "suggestions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Suggestion"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/suggestions/dismiss": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "\"Not this week\" — hide a suggestion for both partners",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 90,
+                    "default": 7
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Hidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "hidden_until": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/suggestions/accept": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Add (one) or Add all — puts suggestions on a list with their usual quantity",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "names"
+                ],
+                "properties": {
+                  "names": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "list_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Default list when omitted"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Added items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/GroceryItem"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `list_not_found`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/events": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "spaces"
+        ],
+        "summary": "Realtime changes of the space from every module (Server-Sent Events)",
+        "description": "`text/event-stream`. Each event: `event: <type>`, `id`, `data: <GroceryEvent | TaskEvent JSON>`. Grocery types:\nlist.created, list.updated, list.deleted, item.added, item.updated, item.bought, item.unbought,\nitem.removed, trip.created. Task types: task.created, task.updated, task.completed, task.reopened,\ntask.deleted. Note types: note.created, note.updated, note.deleted, note.restored, note.moved_out, note.moved_in.\nSpace: space.member_joined (\"Sam joined your Shared space\"). `actor_id` says who did it (\"Sam bought this\", \"Sam did this\"). A `: ping` comment\ncomes every 25 s. On disconnect, reconnect (the server suggests `retry: 3000`) and refetch the list:\nevents are not replayed.\n",
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/Error",
+            "description": "`rate_limited`, `too_many_streams` (5 open streams per user)"
+          },
+          "200": {
+            "description": "Event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/GroceryEvent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TaskEvent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NoteEvent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MemberJoinedEvent"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/tasks": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Tasks — active (by due date, undated last) or done (latest 100)",
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "done"
+              ],
+              "default": "active"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tasks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Task"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Create a task (only the title is required)",
+        "description": "In a Personal space the task is always the owner's (`assignee_id` may be omitted). In Shared it is a member\nor nobody (\"Anyone\"). Assigning a partner queues an \"Alex asked you to\" push, delivered after their quiet hours.\nEmits `task.created`.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "due": {
+                    "$ref": "#/components/schemas/Due"
+                  },
+                  "repeat": {
+                    "$ref": "#/components/schemas/Repeat"
+                  },
+                  "assignee_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "reminder": {
+                    "$ref": "#/components/schemas/ReminderIn"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`limit_reached`"
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "`validation_failed`, `reminder_needs_assignee`, `reminder_in_past`, `assignee_not_member`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/tasks/{taskID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/TaskID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "One task",
+        "responses": {
+          "200": {
+            "description": "Task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `task_not_found`"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Edit a task (JSON merge patch — absent = unchanged, null = clear)",
+        "description": "Moving the due date moves a pending reminder by the same number of days (same wall-clock time, quiet hours\nre-applied). A new assignee becomes the reminder's recipient; `assignee_id: null` (\"Anyone\") removes the\nreminder. There is never more than one reminder per task. Emits `task.updated`.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "notes": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 2000
+                  },
+                  "due": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/Due"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "repeat": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/Repeat"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "assignee_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
+                  },
+                  "reminder": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/ReminderIn"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `task_not_found`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Delete a task and its reminder",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `task_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/tasks/{taskID}/complete": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/TaskID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Complete (\"Sam did this\")",
+        "description": "One-off task: done, its pending reminder is cancelled. Repeating task: stays open and its due date rolls to the\nnext occurrence after today (weekly +7 days; monthly keeps the start day, clamped to the month length:\n31 Jan → 28 Feb → 31 Mar), and the reminder rolls with it. `rolled` tells which. Idempotent. Emits `task.completed`.\n",
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task": {
+                      "$ref": "#/components/schemas/Task"
+                    },
+                    "rolled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `task_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/tasks/{taskID}/reopen": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/TaskID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Undo a completion (reopens, or rolls a repeating task back; restores the reminder)",
+        "responses": {
+          "200": {
+            "description": "Task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `task_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/tasks/{taskID}/reminder": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/TaskID"
+        }
+      ],
+      "put": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Turn on or reschedule the reminder",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReminderIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `task_not_found`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "`reminder_needs_assignee`, `reminder_in_past`"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Turn the reminder off",
+        "responses": {
+          "200": {
+            "description": "Task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `task_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/me/devices": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "My registered devices",
+        "responses": {
+          "200": {
+            "description": "Devices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "devices": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Device"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Register (or refresh) this phone's APNs token",
+        "description": "Call on every launch after `registerForRemoteNotifications`. A token moves to the account that registers it last.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "description": "Hex APNs device token"
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "ios"
+                    ],
+                    "default": "ios"
+                  },
+                  "environment": {
+                    "type": "string",
+                    "enum": [
+                      "sandbox",
+                      "production"
+                    ],
+                    "default": "production",
+                    "description": "sandbox for debug builds"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Device",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Device"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/me/devices/{token}": {
+      "parameters": [
+        {
+          "name": "token",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Forget this phone (sign-out)",
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`device_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/notes": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Notes of the space, most recently updated first — or search with `q`",
+        "description": "`q` searches titles, bodies and checklist text of THIS space only (never another space, so a Personal\nnote can't appear in Shared search). Case and Polish letters don't matter (\"gdan\" finds \"Gdańsku\");\nevery word must match as a word prefix. Up to 50 results, best match first.\n",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Note"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Create a note in this space (plain text + optional checklist)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "body": {
+                    "type": "string",
+                    "maxLength": 20000
+                  },
+                  "items": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 200
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`limit_reached`"
+          },
+          "201": {
+            "$ref": "#/components/responses/NoteWithETag"
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/notes/{noteID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/NoteID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "One note with its checklist; `ETag` is its version",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/NoteWithETag"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `note_not_found`"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Edit title/body — requires `If-Match` with the version you edited",
+        "description": "Optimistic concurrency: if the partner saved in between, the answer is `409 version_conflict` with the note as\nit is now (`note`) and its `ETag`; merge and retry. Checklist changes never conflict with text edits.\n",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "\"3\""
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "body": {
+                    "type": "string",
+                    "maxLength": 20000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/NoteWithETag"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `note_not_found`"
+          },
+          "409": {
+            "description": "`version_conflict`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "note": {
+                          "$ref": "#/components/schemas/Note"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error",
+            "description": "`precondition_required` — If-Match missing"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Delete (soft) — restorable for 1 hour, then purged",
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "restore_until": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `note_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/notes/{noteID}/restore": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/NoteID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Undo a delete",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/NoteWithETag"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`note_not_found` (purged)"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error",
+            "description": "`not_restorable` — window passed"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/notes/{noteID}/move": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/NoteID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Move a Personal note to Shared (\"Move to Shared\", after the ConfirmSheet) — or Undo that move",
+        "description": "The only way a note changes space. Allowed: the Personal space's owner moving it into a Shared space they are\na member of. The response's `undo` says where and until when the same person may move it back (10 minutes);\nmoving it back returns `undo: null`. Emits `note.moved_out` in the old space and `note.moved_in` in the new one.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "space_id"
+                ],
+                "properties": {
+                  "space_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Moved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "$ref": "#/components/schemas/Note"
+                    },
+                    "undo": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "space_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "until": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found` (either space), `note_not_found`"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error",
+            "description": "`move_not_allowed`"
+          },
+          "410": {
+            "$ref": "#/components/responses/Error",
+            "description": "`move_undo_expired`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/notes/{noteID}/items": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/NoteID"
+        }
+      ],
+      "post": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Add a checklist line (at the end, or at `position`)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "text"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "position": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/NoteWithETag"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `note_not_found`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "`validation_failed`, `too_many_items`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/notes/{noteID}/items/{itemID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        },
+        {
+          "$ref": "#/components/parameters/NoteID"
+        },
+        {
+          "name": "itemID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "patch": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Tick, rename or reorder one line (no If-Match needed)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "done": {
+                    "type": "boolean"
+                  },
+                  "position": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/NoteWithETag"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `note_not_found`, `item_not_found`"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "notes"
+        ],
+        "summary": "Remove one line",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/NoteWithETag"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `note_not_found`, `item_not_found`"
+          }
+        }
+      }
+    },
+    "/v1/spaces/{spaceID}/home": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/SpaceID"
+        }
+      ],
+      "get": {
+        "tags": [
+          "home"
+        ],
+        "summary": "Everything the Home screen shows for ONE space, in one call",
+        "description": "Three short sections (no statistics): up to 3 tasks that need attention (overdue → due today → assigned to\nyou → by date; \"today\" is in the caller's time zone), the default grocery list (open count + newest 3 items +\nsuggestion names for the teaser) and the 3 most recently updated notes. `show_invite` is true in a Shared\nspace with nobody else in it. Every section comes from this space only: a Shared Home never contains\nanything Personal.\n",
+        "responses": {
+          "200": {
+            "description": "Home",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Home"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/SpaceNotFound"
+          }
+        }
+      }
+    },
+    "/v1/me/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "My settings",
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Change settings (only the fields sent)",
+        "description": "`suggestions_enabled: false` empties `/suggestions` and the Home teaser for you (your partner keeps theirs).\nA notification kind turned off is never pushed — also when it was already queued.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/me/avatar": {
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Upload my avatar (raw JPEG or PNG body, ≤ 10 MB)",
+        "description": "The server decodes the picture, crops a centered square and re-encodes JPEG at 512 and 128 px — EXIF and\nGPS never survive. HEIC isn't accepted: send `UIImage.jpegData`. The previous avatar is deleted.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "200": {
+            "description": "Me",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/Error",
+            "description": "`image_too_large`"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error",
+            "description": "`unsupported_image`"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error",
+            "description": "`bad_image`"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Remove my avatar",
+        "responses": {
+          "200": {
+            "description": "Me",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{userID}/avatar": {
+      "parameters": [
+        {
+          "name": "userID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "size",
+          "in": "query",
+          "schema": {
+            "type": "integer",
+            "enum": [
+              512,
+              128
+            ],
+            "default": 512
+          }
+        },
+        {
+          "name": "v",
+          "in": "query",
+          "description": "Cache-busting version from the avatar URL",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Someone's avatar — only for themselves and people sharing a space with them",
+        "description": "Authenticated, `Cache-Control private, max-age=300`, ETag/If-None-Match. Anyone else gets 404, as for a person with no avatar. Use the `url` from `/v1/me` or the members list.",
+        "responses": {
+          "200": {
+            "description": "JPEG",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`avatar_not_found`"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "SpaceID": {
+        "name": "spaceID",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "ListID": {
+        "name": "listID",
+        "in": "path",
+        "required": true,
+        "description": "A list id, or `default` for the space's default list",
+        "schema": {
+          "type": "string",
+          "example": "default"
+        }
+      },
+      "ItemID": {
+        "name": "itemID",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "TaskID": {
+        "name": "taskID",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "NoteID": {
+        "name": "noteID",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "Code": {
+        "name": "code",
+        "in": "path",
+        "required": true,
+        "description": "Case-insensitive; `TGT-7KQ2`, `tgt7kq2` and `7KQ2` are equivalent.",
+        "schema": {
+          "type": "string",
+          "example": "TGT-7KQ2"
+        }
+      }
+    },
+    "requestBodies": {
+      "IDToken": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "id_token",
+                "nonce"
+              ],
+              "properties": {
+                "id_token": {
+                  "type": "string"
+                },
+                "nonce": {
+                  "type": "string",
+                  "description": "Raw nonce generated by the client for this sign-in (required: binds the token to it, so a leaked ID token can't be replayed). Apple: pass SHA-256(nonce) to Apple, send the raw one here."
+                },
+                "display_name": {
+                  "type": "string",
+                  "maxLength": 50
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "NoteWithETag": {
+        "description": "Note (the ETag header carries its version)",
+        "headers": {
+          "ETag": {
+            "schema": {
+              "type": "string",
+              "example": "\"3\""
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Note"
+            }
+          }
+        }
+      },
+      "AuthResult": {
+        "description": "Signed in",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AuthResult"
+            }
+          }
+        }
+      },
+      "Error": {
+        "description": "Error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "`unauthorized`, `invalid_access_token` (refresh and retry), `session_revoked`",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "`rate_limited` — wait `Retry-After` seconds",
+        "headers": {
+          "Retry-After": {
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Seconds until the next attempt is allowed"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "SpaceNotFound": {
+        "description": "`space_not_found` — doesn't exist or you may not see it",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Status": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "invalid_credentials"
+              },
+              "message": {
+                "type": "string",
+                "example": "Email or password is incorrect."
+              }
+            }
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "email_verified",
+          "display_name",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Me": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/User"
+          },
+          {
+            "type": "object",
+            "required": [
+              "providers",
+              "time_zone",
+              "quiet_hours"
+            ],
+            "properties": {
+              "providers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "email",
+                    "apple",
+                    "google"
+                  ]
+                }
+              },
+              "time_zone": {
+                "type": "string",
+                "example": "Europe/Warsaw"
+              },
+              "quiet_hours": {
+                "$ref": "#/components/schemas/QuietHours"
+              },
+              "avatar": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Avatar"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "QuietHours": {
+        "type": "object",
+        "description": "Reminders falling inside are delivered at `end`. start == end turns quiet hours off.",
+        "properties": {
+          "start": {
+            "type": "string",
+            "example": "22:00"
+          },
+          "end": {
+            "type": "string",
+            "example": "08:00"
+          }
+        }
+      },
+      "Tokens": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "access_expires_at",
+          "refresh_token",
+          "refresh_expires_at"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string",
+            "const": "Bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "description": "Seconds",
+            "example": 900
+          },
+          "access_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "refresh_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuthResult": {
+        "type": "object",
+        "required": [
+          "user",
+          "tokens",
+          "is_new_user"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/Tokens"
+          },
+          "is_new_user": {
+            "type": "boolean",
+            "description": "true → show onboarding (name → invite or solo)"
+          }
+        }
+      },
+      "Space": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "owner_id",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "shared"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "MySpace": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Space"
+          },
+          {
+            "type": "object",
+            "required": [
+              "role",
+              "member_count"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "owner",
+                  "member"
+                ]
+              },
+              "member_count": {
+                "type": "integer"
+              },
+              "shopping_day": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 6,
+                "description": "Usual shopping weekday, 0 = Sunday; suggestions are timed for it"
+              }
+            }
+          }
+        ]
+      },
+      "Member": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "display_name",
+          "role",
+          "joined_at"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "member"
+            ]
+          },
+          "joined_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "avatar": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Avatar"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Invite": {
+        "type": "object",
+        "required": [
+          "id",
+          "space_id",
+          "code",
+          "link",
+          "status",
+          "created_by",
+          "expires_at",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^TGT-[0-9A-Z]{4}$",
+            "example": "TGT-7KQ2"
+          },
+          "link": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://together.app/invite/TGT-7KQ2"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "accepted",
+              "declined",
+              "revoked",
+              "expired"
+            ]
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "InvitePreview": {
+        "type": "object",
+        "required": [
+          "code",
+          "status",
+          "expires_at",
+          "space",
+          "inviter"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "space": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "inviter": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "display_name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "GroceryList": {
+        "type": "object",
+        "required": [
+          "id",
+          "space_id",
+          "name",
+          "is_default",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "open_count": {
+            "type": "integer",
+            "description": "Only in GET /lists"
+          },
+          "bought_count": {
+            "type": "integer",
+            "description": "Only in GET /lists"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GroceryItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "list_id",
+          "space_id",
+          "name",
+          "qty",
+          "note",
+          "added_by",
+          "done",
+          "bought_by",
+          "bought_at",
+          "via_receipt",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "list_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "example": "Oat milk"
+          },
+          "qty": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "2"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "added_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "bought_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "bought_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "via_receipt": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Purchase": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "item_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "qty": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_grosze": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "bought_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "bought_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "via_receipt": {
+            "type": "boolean"
+          },
+          "on_list": {
+            "type": "boolean",
+            "description": "false = a receipt extra"
+          }
+        }
+      },
+      "Trip": {
+        "type": "object",
+        "required": [
+          "id",
+          "space_id",
+          "shopped_at",
+          "total_grosze",
+          "merchant",
+          "via_receipt",
+          "created_by",
+          "item_count",
+          "buyers"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "shopped_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "total_grosze": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "PLN in grosze; null = no receipt / no total"
+          },
+          "merchant": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "via_receipt": {
+            "type": "boolean"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "item_count": {
+            "type": "integer"
+          },
+          "buyers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "\"You & Sam · 18 items\""
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Purchase"
+            },
+            "description": "Only in GET /trips/{tripID} and responses that create a trip"
+          }
+        }
+      },
+      "MonthSummary": {
+        "type": "object",
+        "required": [
+          "month",
+          "total_grosze",
+          "trips",
+          "trips_with_total"
+        ],
+        "properties": {
+          "month": {
+            "type": "string",
+            "example": "2026-11"
+          },
+          "total_grosze": {
+            "type": "integer",
+            "example": 35260
+          },
+          "trips": {
+            "type": "integer"
+          },
+          "trips_with_total": {
+            "type": "integer"
+          }
+        }
+      },
+      "Suggestion": {
+        "type": "object",
+        "required": [
+          "name",
+          "qty",
+          "reason",
+          "interval_days",
+          "times_bought",
+          "last_bought_at"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Eggs"
+          },
+          "qty": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "10"
+          },
+          "reason": {
+            "type": "string",
+            "example": "Usually every week · last bought 8 days ago"
+          },
+          "interval_days": {
+            "type": "integer"
+          },
+          "times_bought": {
+            "type": "integer"
+          },
+          "last_bought_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReceiptLineIn": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "OAT MILK"
+          },
+          "qty": {
+            "type": "string",
+            "example": "2 × 4,99"
+          },
+          "price_grosze": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 998
+          },
+          "item_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Confirm only"
+          },
+          "purchase_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Confirm only"
+          }
+        }
+      },
+      "ReceiptCandidate": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purchase_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Set when the item is already ticked"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ReceiptLineMatch": {
+        "type": "object",
+        "required": [
+          "index",
+          "name",
+          "status",
+          "match",
+          "did_you_mean"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "qty": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_grosze": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "matched",
+              "extra",
+              "unclear"
+            ]
+          },
+          "match": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReceiptCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "did_you_mean": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReceiptCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReceiptScan": {
+        "type": "object",
+        "required": [
+          "receipt",
+          "lines"
+        ],
+        "properties": {
+          "receipt": {
+            "type": "object",
+            "required": [
+              "merchant",
+              "purchased_on",
+              "currency",
+              "total_grosze",
+              "lines_total_grosze",
+              "total_matches"
+            ],
+            "properties": {
+              "merchant": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Shop brand, e.g. \"Biedronka\""
+              },
+              "purchased_on": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date",
+                "description": "Sale date printed on the receipt"
+              },
+              "currency": {
+                "type": "string",
+                "description": "ISO 4217",
+                "default PLN": null
+              },
+              "total_grosze": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "\"SUMA PLN\" — send it as `total_grosze` to POST /receipts"
+              },
+              "lines_total_grosze": {
+                "type": "integer",
+                "description": "Sum of `price_grosze` over the lines"
+              },
+              "total_matches": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "false = lines don't add up to the total (check prices); null = no total"
+              }
+            }
+          },
+          "lines": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ReceiptLineMatch"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "raw",
+                    "quantity",
+                    "unit",
+                    "unit_price_grosze",
+                    "line_price_grosze",
+                    "discount_grosze",
+                    "confidence",
+                    "unclear"
+                  ],
+                  "properties": {
+                    "raw": {
+                      "type": "string",
+                      "description": "The line as printed (show it under the clean `name`)"
+                    },
+                    "quantity": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "description": "2, or 0.456 for weighed goods"
+                    },
+                    "unit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "szt",
+                        "kg",
+                        "g",
+                        "l",
+                        "ml",
+                        "opak",
+                        null
+                      ]
+                    },
+                    "unit_price_grosze": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "description": "Per piece or per kg"
+                    },
+                    "line_price_grosze": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "description": "Printed line value before discounts"
+                    },
+                    "discount_grosze": {
+                      "type": "integer",
+                      "description": "\"rabat\"/\"opust\" applied to this line (price_grosze = line − discount)"
+                    },
+                    "confidence": {
+                      "type": "string",
+                      "enum": [
+                        "high",
+                        "medium",
+                        "low"
+                      ]
+                    },
+                    "unclear": {
+                      "type": "boolean",
+                      "description": "The recognizer isn't sure — the person must check this line"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "GroceryEvent": {
+        "type": "object",
+        "required": [
+          "type",
+          "space_id",
+          "actor_id",
+          "at"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "list.created",
+              "list.updated",
+              "list.deleted",
+              "item.added",
+              "item.updated",
+              "item.bought",
+              "item.unbought",
+              "item.removed",
+              "trip.created"
+            ]
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "list": {
+            "$ref": "#/components/schemas/GroceryList"
+          },
+          "item": {
+            "$ref": "#/components/schemas/GroceryItem"
+          },
+          "trip": {
+            "$ref": "#/components/schemas/Trip"
+          },
+          "removed_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "Due": {
+        "type": "object",
+        "required": [
+          "date"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-11-09"
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d{2}:\\d{2}$",
+            "example": "18:00",
+            "description": "Wall-clock time in the task's time_zone; null = all day"
+          }
+        }
+      },
+      "Repeat": {
+        "type": "string",
+        "enum": [
+          "weekly",
+          "monthly",
+          "everyTwoMonths"
+        ],
+        "description": "Needs a due date. Values match the client's RepeatRule."
+      },
+      "ReminderIn": {
+        "type": "object",
+        "description": "Either an exact time or the design's default (\"Morning of · 9:00\" with a date, \"Tomorrow · 9:00\" without).",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "preset": {
+            "type": "string",
+            "enum": [
+              "default"
+            ]
+          }
+        }
+      },
+      "Reminder": {
+        "type": "object",
+        "required": [
+          "remind_at",
+          "shifted_from",
+          "recipient_id",
+          "status"
+        ],
+        "properties": {
+          "remind_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it fires"
+          },
+          "shifted_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The time asked for, when it fell into the recipient's quiet hours and was moved to their end (8:00)"
+          },
+          "recipient_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent",
+              "cancelled"
+            ]
+          }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "required": [
+          "id",
+          "space_id",
+          "title",
+          "notes",
+          "due",
+          "time_zone",
+          "repeat",
+          "assignee_id",
+          "created_by",
+          "done",
+          "done_at",
+          "done_by",
+          "last_done_at",
+          "last_done_by",
+          "reminder",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "example": "Return the parcel"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "due": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Due"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "time_zone": {
+            "type": "string",
+            "example": "Europe/Warsaw"
+          },
+          "repeat": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Repeat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "assignee_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "null = Anyone (Shared only)"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "done_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "done_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "last_done_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Also set for repeating tasks",
+            "which never stay done": null
+          },
+          "last_done_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "reminder": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Reminder"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TaskEvent": {
+        "type": "object",
+        "required": [
+          "type",
+          "space_id",
+          "actor_id",
+          "at"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "task.created",
+              "task.updated",
+              "task.completed",
+              "task.reopened",
+              "task.deleted"
+            ]
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "removed_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "ios"
+            ]
+          },
+          "token": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "sandbox",
+              "production"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NoteItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "done_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "done_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "Note": {
+        "type": "object",
+        "required": [
+          "id",
+          "space_id",
+          "title",
+          "body",
+          "preview",
+          "version",
+          "items",
+          "item_count",
+          "done_count",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "description": "May be empty — show the first line of the body"
+          },
+          "body": {
+            "type": "string",
+            "description": "Plain text; line breaks kept"
+          },
+          "preview": {
+            "type": "string",
+            "description": "NoteRow preview: the body, or the checklist as \"Passport, Chargers\""
+          },
+          "version": {
+            "type": "integer",
+            "description": "Send back as If-Match when editing title/body"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NoteItem"
+            }
+          },
+          "item_count": {
+            "type": "integer"
+          },
+          "done_count": {
+            "type": "integer"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "\"edited by Sam\" (checklist ticks count)"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NoteEvent": {
+        "type": "object",
+        "required": [
+          "type",
+          "space_id",
+          "actor_id",
+          "at"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "note.created",
+              "note.updated",
+              "note.deleted",
+              "note.restored",
+              "note.moved_out",
+              "note.moved_in"
+            ]
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "note": {
+            "$ref": "#/components/schemas/Note"
+          },
+          "removed_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "Home": {
+        "type": "object",
+        "required": [
+          "space",
+          "show_invite",
+          "tasks",
+          "groceries",
+          "notes"
+        ],
+        "properties": {
+          "space": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "personal",
+                  "shared"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "member_count": {
+                "type": "integer"
+              }
+            }
+          },
+          "show_invite": {
+            "type": "boolean",
+            "description": "Show \"Invite your partner\""
+          },
+          "tasks": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Open tasks in the space (\"5 to do\")"
+              },
+              "items": {
+                "type": "array",
+                "maxItems": 3,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "due": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/Due"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "overdue",
+                        "today",
+                        "upcoming",
+                        "someday"
+                      ]
+                    },
+                    "assignee_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid"
+                    },
+                    "assigned_to_me": {
+                      "type": "boolean"
+                    },
+                    "repeat": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "reminder_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "groceries": {
+            "type": "object",
+            "properties": {
+              "list_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "open_count": {
+                "type": "integer"
+              },
+              "items": {
+                "type": "array",
+                "maxItems": 3,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "qty": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              },
+              "suggestions": {
+                "type": "array",
+                "maxItems": 4,
+                "items": {
+                  "type": "string"
+                },
+                "description": "Names for \"3 things you usually buy — review\""
+              }
+            }
+          },
+          "notes": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "maxItems": 3,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "preview": {
+                      "type": "string"
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updated_by": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "MemberJoinedEvent": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "space.member_joined"
+          },
+          "space_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "member": {
+            "type": "object",
+            "properties": {
+              "user_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "display_name": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Notifications": {
+        "type": "object",
+        "properties": {
+          "task_reminders": {
+            "type": "boolean",
+            "default": true
+          },
+          "task_assigned": {
+            "type": "boolean",
+            "default": true,
+            "description": "\"Alex asked you to\" when a partner assigns a task"
+          },
+          "partner_joined": {
+            "type": "boolean",
+            "default": true
+          },
+          "grocery_reminder": {
+            "type": "boolean",
+            "default": false,
+            "description": "Stored for the planned shopping-day reminder; nothing sends it yet"
+          }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "required": [
+          "time_zone",
+          "quiet_hours",
+          "suggestions_enabled",
+          "notifications"
+        ],
+        "properties": {
+          "time_zone": {
+            "type": "string",
+            "example": "Europe/Warsaw"
+          },
+          "quiet_hours": {
+            "$ref": "#/components/schemas/QuietHours"
+          },
+          "suggestions_enabled": {
+            "type": "boolean"
+          },
+          "notifications": {
+            "$ref": "#/components/schemas/Notifications"
+          }
+        }
+      },
+      "SettingsPatch": {
+        "type": "object",
+        "properties": {
+          "time_zone": {
+            "type": "string"
+          },
+          "quiet_hours": {
+            "$ref": "#/components/schemas/QuietHours"
+          },
+          "suggestions_enabled": {
+            "type": "boolean"
+          },
+          "notifications": {
+            "$ref": "#/components/schemas/Notifications"
+          }
+        }
+      },
+      "Avatar": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "example": "/v1/users/0b0c…/avatar?v=1762600000",
+            "description": "Relative to the API; send the bearer token"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}
