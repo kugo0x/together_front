@@ -166,17 +166,8 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
     private var avatar: some View {
-        if let data = store.myAvatar, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 56, height: 56)
-                .clipShape(Circle())
-        } else {
-            Avatar(person: store.me, size: 56)
-        }
+        Avatar(person: store.me, size: 56)
     }
 
     private func header(_ text: String) -> some View {

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Testing
 @testable import Together
 
@@ -12,6 +13,9 @@ struct RemoteSyncLoadTests {
         nonisolated(unsafe) static var notesJSON = "[]"
         nonisolated(unsafe) static var onNotes: (@Sendable () -> Void)?
         nonisolated(unsafe) static var offline = false
+        /// `/v1/me` answers with this ID and, when set, an avatar URL.
+        nonisolated(unsafe) static var meID = UUID()
+        nonisolated(unsafe) static var avatarVersion: Int?
 
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -26,7 +30,7 @@ struct RemoteSyncLoadTests {
                 Self.onNotes?()
                 Thread.sleep(forTimeInterval: 0.4) // the event arrives while the load is still running
             }
-            let body = Data(RemoteSyncLoadTests.answer(path).utf8)
+            let body = path.hasSuffix("/avatar") ? RemoteSyncLoadTests.png : Data(RemoteSyncLoadTests.answer(path).utf8)
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
                                            headerFields: ["Content-Type": "application/json"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -42,7 +46,8 @@ struct RemoteSyncLoadTests {
 
     nonisolated static func answer(_ path: String) -> String {
         if path.hasSuffix("/v1/me") {
-            return #"{"id":"\#(UUID())","email":"a@b.co","email_verified":true,"display_name":"Alex","created_at":"\#(at)","providers":["email"],"time_zone":"Europe/Warsaw","quiet_hours":{"start":"22:00","end":"08:00"},"avatar":null}"#
+            let avatar = Stub.avatarVersion.map { #"{"url":"/v1/users/\#(Stub.meID)/avatar?v=\#($0)","updated_at":"\#(at)"}"# } ?? "null"
+            return #"{"id":"\#(Stub.meID)","email":"a@b.co","email_verified":true,"display_name":"Alex","created_at":"\#(at)","providers":["email"],"time_zone":"Europe/Warsaw","quiet_hours":{"start":"22:00","end":"08:00"},"avatar":\#(avatar)}"#
         }
         if path.hasSuffix("/v1/me/settings") {
             return #"{"time_zone":"Europe/Warsaw","quiet_hours":{"start":"22:00","end":"08:00"},"suggestions_enabled":true,"notifications":{}}"#
@@ -70,7 +75,13 @@ struct RemoteSyncLoadTests {
         return APIClient(baseURL: URL(string: "https://api.test")!, session: URLSession(configuration: config), vault: nil)
     }
 
+    nonisolated static let png: Data = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).pngData { context in
+        UIColor.red.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+    }
+
     init() {
+        Stub.avatarVersion = nil
         Stub.notesJSON = "[]"
         Stub.onNotes = nil
         Stub.offline = false
@@ -110,5 +121,20 @@ struct RemoteSyncLoadTests {
         #expect(store.hasLoaded)
         #expect(store.notes.map(\.title) == ["Wi-Fi password"])
         #expect(store.connection == .offline(pending: 0))
+    }
+
+    @Test func profilePhotoFromTheServerIsShown() async throws {
+        let me = Person(id: UUID(), name: "Alex", tint: .alex)
+        Stub.meID = me.id
+        Stub.avatarVersion = 1
+        let store = AppStore(data: .empty)
+        let sync = RemoteSync(client: Self.client(), store: store, toasts: ToastCenter(), me: me, cachesLoads: false)
+        defer { sync.stop() }
+
+        await sync.loadAll()
+        for _ in 0..<50 where store.avatarPhotos[me.id] == nil { try await Task.sleep(for: .milliseconds(20)) }
+
+        #expect(store.avatarPhotos[me.id] != nil)
+        #expect(RemoteSync.avatarRequest("/v1/users/\(me.id)/avatar?v=7")?.path == "v1/users/\(me.id)/avatar")
     }
 }
