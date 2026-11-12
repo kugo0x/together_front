@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The note editor: Private / Shared banner, title, plain-text body, checklist. Text autosaves (with the note's
-/// version, merging a partner's edit if one lands in between); checklist lines save as you go. A Personal note can
-/// move to Shared through the ConfirmSheet, with Undo; delete has Undo too.
+/// The note editor: Private / Shared banner, then one plain-text field — the first line is the title (like Notes),
+/// the rest the body. It autosaves with the note's version, merging a partner's edit if one lands in between. A
+/// Personal note can move to Shared through the ConfirmSheet, with Undo; delete has Undo too. No checklist, no
+/// formatting (decided 2026-11-12): a list is just lines of text.
 struct NoteEditor: View {
     let noteID: Note.ID
 
@@ -12,12 +13,6 @@ struct NoteEditor: View {
     @Environment(\.selectSpace) private var selectSpace
     @Environment(\.dismiss) private var dismiss
 
-    enum Field: Hashable {
-        case title, body
-        case item(ChecklistItem.ID)
-    }
-
-    @State private var title = ""
     @State private var text = ""
     /// What the store had when we last loaded or saved — the base for merging.
     @State private var base: (title: String, body: String, version: Int) = ("", "", 0)
@@ -26,7 +21,7 @@ struct NoteEditor: View {
     @State private var saveTask: Task<Void, Never>?
     /// The server merged my save with the partner's (version conflict): say so until dismissed.
     @State private var showMerged = false
-    @FocusState private var focus: Field?
+    @FocusState private var focused: Bool
 
     /// Only ever the note in the active space — never shown in another one.
     private var note: Note? { store.note(noteID, in: space) }
@@ -61,84 +56,35 @@ struct NoteEditor: View {
         ) { move() }
         .onAppear(perform: load)
         .onDisappear(perform: leave)
-        .onChange(of: title) { scheduleSave() }
         .onChange(of: text) { scheduleSave() }
-        .onChange(of: focus) { old, _ in dropEmptyItem(old) }
         .onChange(of: store.noteMerges[noteID]) { _, merges in if merges != nil { adoptMerge() } }
     }
 
     // MARK: Layout
 
     private func editor(_ note: Note) -> some View {
-        List {
-            banner(note)
-                .listRowInsets(EdgeInsets(top: TG.Space.s1, leading: TG.Space.s4, bottom: TG.Space.s2, trailing: TG.Space.s4))
-                .editorRow()
-
-            if showMerged {
-                mergedNotice
-                    .listRowInsets(EdgeInsets(top: 0, leading: TG.Space.s4, bottom: TG.Space.s2, trailing: TG.Space.s4))
-                    .editorRow()
-            }
-
-            VStack(alignment: .leading, spacing: TG.Space.s2) {
-                TextField("Title", text: $title, prompt: Text("Title").foregroundStyle(TG.Colors.ink3), axis: .vertical)
-                    .font(TG.Font.title2.weight(.bold))
-                    .foregroundStyle(TG.Colors.ink)
-                    .focused($focus, equals: .title)
-                    .submitLabel(.next)
-                    .onChange(of: title) { _, new in
-                        // Return moves on to the body instead of breaking the title.
-                        if new.contains("\n") {
-                            title = new.replacingOccurrences(of: "\n", with: "")
-                            focus = .body
-                        }
-                    }
-                    .accessibilityLabel("Title")
+        ScrollView {
+            VStack(alignment: .leading, spacing: TG.Space.s3) {
+                banner(note)
+                if showMerged { mergedNotice }
                 Text(meta(note))
                     .font(TG.Font.footnote)
                     .foregroundStyle(TG.Colors.ink2)
+                    .padding(.horizontal, TG.Space.s1)
+                TextField("Note", text: $text,
+                          prompt: Text("Start writing — the first line is the title").foregroundStyle(TG.Colors.ink3),
+                          axis: .vertical)
+                    .lineLimit(12...)
+                    .font(TG.Font.body)
+                    .foregroundStyle(TG.Colors.ink)
+                    .focused($focused)
+                    .accessibilityLabel("Note")
+                    .padding(.horizontal, TG.Space.s1)
             }
-            .listRowInsets(EdgeInsets(top: TG.Space.s3, leading: TG.Space.s5, bottom: TG.Space.s2, trailing: TG.Space.s5))
-            .editorRow()
-
-            TextField("Note", text: $text, prompt: Text("Start writing…").foregroundStyle(TG.Colors.ink3), axis: .vertical)
-                .lineLimit(5...)
-                .font(TG.Font.body)
-                .foregroundStyle(TG.Colors.ink)
-                .focused($focus, equals: .body)
-                .accessibilityLabel("Note")
-                .listRowInsets(EdgeInsets(top: TG.Space.s2, leading: TG.Space.s5, bottom: TG.Space.s3, trailing: TG.Space.s5))
-                .editorRow()
-
-            Section {
-                ForEach(note.checklist) { item in
-                    checklistRow(item, in: note)
-                }
-                .onMove { from, to in
-                    guard let source = from.first else { return }
-                    let item = note.checklist[source]
-                    store.updateChecklistItem(item.id, in: note.id, space: space, position: to > source ? to - 1 : to)
-                }
-                .onDelete { offsets in
-                    for i in offsets { store.deleteChecklistItem(note.checklist[i].id, in: note.id, space: space) }
-                }
-
-                Button { addItem(after: nil, in: note) } label: {
-                    Label { Text("Add checklist item") } icon: { Icon(.plus) }
-                        .font(TG.Font.subhead.weight(.medium))
-                        .foregroundStyle(Accent.of(note.space).ink)
-                        .frame(minHeight: DS.minTarget)
-                }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets(top: 0, leading: TG.Space.s5, bottom: 0, trailing: TG.Space.s5))
-                .editorRow()
-            }
+            .padding(.horizontal, TG.Space.s4)
+            .padding(.vertical, TG.Space.s2)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
-        .environment(\.defaultMinListRowHeight, 0)
     }
 
     private func banner(_ note: Note) -> some View {
@@ -180,26 +126,6 @@ struct NoteEditor: View {
         .accessibilityAction(named: "Dismiss") { showMerged = false }
     }
 
-    private func checklistRow(_ item: ChecklistItem, in note: Note) -> some View {
-        HStack(spacing: TG.Space.s3) {
-            CheckCircle(checked: item.done, label: (item.done ? "Untick " : "Tick ") + (item.label.isEmpty ? "item" : item.label)) {
-                store.updateChecklistItem(item.id, in: note.id, space: space, done: !item.done)
-            }
-            .environment(\.space, note.space)
-            ChecklistLineField(item: item, focus: $focus) { text in
-                store.updateChecklistItem(item.id, in: note.id, space: space, text: text)
-            } onSubmit: {
-                addItem(after: item, in: note)
-            }
-        }
-        .frame(minHeight: DS.minTarget)
-        .listRowInsets(EdgeInsets(top: 0, leading: TG.Space.s4, bottom: 0, trailing: TG.Space.s5))
-        .editorRow()
-        .accessibilityAction(named: "Move up") { move(item, by: -1, in: note) }
-        .accessibilityAction(named: "Move down") { move(item, by: 1, in: note) }
-        .accessibilityAction(named: "Delete") { store.deleteChecklistItem(item.id, in: note.id, space: space) }
-    }
-
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         if let note {
@@ -215,24 +141,13 @@ struct NoteEditor: View {
                 }
                 .tint(TG.Colors.danger)
             }
-            // Above the keyboard, so adding a line or finishing never needs the keyboard out of the way.
             ToolbarItemGroup(placement: .keyboard) {
-                Button { addItem(after: focusedItem(in: note), in: note) } label: {
-                    Label { Text("Add checklist item") } icon: { Icon(.plus) }
-                        .labelStyle(.titleAndIcon)
-                }
-                .tint(Accent.of(note.space).ink)
                 Spacer()
-                Button("Done") { focus = nil }
+                Button("Done") { focused = false }
                     .fontWeight(.semibold)
                     .tint(Accent.of(note.space).ink)
             }
         }
-    }
-
-    private func focusedItem(in note: Note) -> ChecklistItem? {
-        guard case .item(let id)? = focus else { return nil }
-        return note.checklist.first { $0.id == id }
     }
 
     private func meta(_ note: Note) -> String {
@@ -244,12 +159,13 @@ struct NoteEditor: View {
 
     // MARK: Text: load, autosave, merge
 
-    /// The server merged a save of mine with the partner's: take theirs for a field I haven't touched since that save,
-    /// keep what I'm typing otherwise (it saves on top of the merged version).
+    /// The server merged a save of mine with the partner's: take theirs for a field (first line / rest) I haven't
+    /// touched since that save, keep what I'm typing otherwise (it saves on top of the merged version).
     private func adoptMerge() {
         guard let note else { return }
-        if title == base.title { title = note.title }
-        if text == base.body { text = note.body }
+        let mine = Note.split(text)
+        text = Note.join(title: mine.title == base.title ? note.title : mine.title,
+                         body: mine.body == base.body ? note.body : mine.body)
         base = (note.title, note.body, note.version)
         showMerged = true
     }
@@ -257,10 +173,9 @@ struct NoteEditor: View {
     private func load() {
         guard !loaded, let note else { return }
         loaded = true
-        title = note.title
-        text = note.body
+        text = note.text
         base = (note.title, note.body, note.version)
-        if note.isEmpty { focus = .title }
+        if note.isEmpty { focused = true }
     }
 
     private func scheduleSave() {
@@ -273,20 +188,20 @@ struct NoteEditor: View {
         }
     }
 
-    /// Saves title/body if they changed. On a version conflict (the partner saved in between), keeps whichever
-    /// side changed each field — mine wins only where I edited — and retries once.
+    /// Saves if the text changed. On a version conflict (the partner saved in between), keeps whichever side
+    /// changed each part — mine wins only where I edited — and retries once.
     private func save(retry: Bool = true) {
-        guard loaded, title != base.title || text != base.body else { return }
-        switch store.updateNote(noteID, in: space, title: title, body: text, ifMatch: base.version) {
+        let (title, body) = Note.split(text)
+        guard loaded, title != base.title || body != base.body else { return }
+        switch store.updateNote(noteID, in: space, title: title, body: body, ifMatch: base.version) {
         case .success(let saved)?:
             base = (saved.title, saved.body, saved.version)
         case .failure(let conflict)?:
             let current = conflict.current
             let mergedTitle = title == base.title ? current.title : title
-            let mergedBody = text == base.body ? current.body : text
+            let mergedBody = body == base.body ? current.body : body
             base = (current.title, current.body, current.version)
-            title = mergedTitle
-            text = mergedBody
+            text = Note.join(title: mergedTitle, body: mergedBody)
             showMerged = true // the partner's save arrived (event stream) while I was typing
             if retry { save(retry: false) }
         case nil:
@@ -299,28 +214,6 @@ struct NoteEditor: View {
         save()
         // A new note left empty isn't kept.
         if let note, note.isEmpty { store.deleteNote(note.id, in: space) }
-    }
-
-    // MARK: Checklist
-
-    private func addItem(after item: ChecklistItem?, in note: Note) {
-        let position = item.flatMap { current in note.checklist.firstIndex { $0.id == current.id } }.map { $0 + 1 }
-        if let new = store.addChecklistItem("", to: note.id, in: space, at: position) {
-            focus = .item(new.id)
-        }
-    }
-
-    /// An item left empty when focus moves away is removed.
-    private func dropEmptyItem(_ field: Field?) {
-        guard case .item(let id)? = field, let note,
-              let item = note.checklist.first(where: { $0.id == id }),
-              item.label.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        store.deleteChecklistItem(id, in: note.id, space: space)
-    }
-
-    private func move(_ item: ChecklistItem, by offset: Int, in note: Note) {
-        guard let i = note.checklist.firstIndex(where: { $0.id == item.id }) else { return }
-        store.updateChecklistItem(item.id, in: note.id, space: space, position: i + offset)
     }
 
     // MARK: Move and delete
@@ -344,51 +237,5 @@ struct NoteEditor: View {
         dismiss()
         guard !deleted.note.isEmpty else { return }
         toasts.showUndo("Note deleted") { store.restoreNote(noteID, in: space) }
-    }
-}
-
-/// One checklist line's text. It edits its own state and saves each change, instead of binding straight to the
-/// store: with a store round trip, return could submit before the last keystroke landed ("Passpor").
-private struct ChecklistLineField: View {
-    let item: ChecklistItem
-    var focus: FocusState<NoteEditor.Field?>.Binding
-    let save: (String) -> Void
-    let onSubmit: () -> Void
-
-    @State private var text: String
-
-    init(item: ChecklistItem, focus: FocusState<NoteEditor.Field?>.Binding,
-         save: @escaping (String) -> Void, onSubmit: @escaping () -> Void) {
-        self.item = item
-        self.focus = focus
-        self.save = save
-        self.onSubmit = onSubmit
-        _text = State(initialValue: item.label)
-    }
-
-    var body: some View {
-        TextField("Checklist item", text: $text, prompt: Text("Item").foregroundStyle(TG.Colors.ink3))
-            .font(TG.Font.body)
-            .foregroundStyle(item.done ? TG.Colors.ink2 : TG.Colors.ink)
-            .strikethrough(item.done, color: TG.Colors.ink3)
-            .focused(focus, equals: .item(item.id))
-            .submitLabel(.next)
-            .accessibilityLabel("Checklist item")
-            .onChange(of: text) { _, new in if new != item.label { save(new) } }
-            .onSubmit {
-                if text != item.label { save(text) }
-                onSubmit()
-            }
-            // Someone else renamed the line while I'm not editing it.
-            .onChange(of: item.label) { _, new in
-                if focus.wrappedValue != .item(item.id), new != text { text = new }
-            }
-    }
-}
-
-private extension View {
-    /// Editor rows sit straight on the page: no row background, no separators.
-    func editorRow() -> some View {
-        listRowBackground(Color.clear).listRowSeparator(.hidden)
     }
 }

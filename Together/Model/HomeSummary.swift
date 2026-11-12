@@ -3,7 +3,7 @@ import Foundation
 /// Everything Home shows for ONE space — shaped like `GET /v1/spaces/{id}/home` (back/api/openapi.yaml, `Home`).
 /// Today it's built from the in-memory store (`AppStore.home(in:)`); phase 9 decodes it from the API instead.
 ///
-/// Three short sections, no statistics ("Lists, not dashboards"). Every section comes from this space only.
+/// Two short sections — Today's tasks and Groceries — no statistics ("Lists, not dashboards"). Every section comes from this space only.
 struct HomeSummary: Equatable, Sendable {
     struct Space: Equatable, Sendable {
         var kind: SpaceKind
@@ -27,7 +27,7 @@ struct HomeSummary: Equatable, Sendable {
     struct Tasks: Equatable, Sendable {
         /// Open tasks in the space ("5 to do").
         var total: Int
-        /// Up to 3 that need attention.
+        /// Today: every open task due today or overdue — overdue first.
         var items: [TaskEntry]
     }
 
@@ -46,21 +46,11 @@ struct HomeSummary: Equatable, Sendable {
         var suggestions: [String]
     }
 
-    struct NoteEntry: Equatable, Identifiable, Sendable {
-        var id: Note.ID
-        var title: String
-        var preview: String?
-        var updatedAt: Date
-        var updatedBy: Person?
-    }
-
     var space: Space
     /// "Invite your partner" — a Shared space with nobody else in it.
     var showInvite: Bool
     var tasks: Tasks
     var groceries: Groceries
-    /// The 3 most recently updated notes.
-    var notes: [NoteEntry]
 
     static let maxItems = 3
 
@@ -83,18 +73,8 @@ extension AppStore {
             return due < today ? .overdue : due == today ? .today : .upcoming
         }
         func isMine(_ task: TaskItem) -> Bool { space == .personal || task.assignee == me }
-        // overdue → due today → assigned to me → by date (the active list is already by date).
-        func rank(_ task: TaskItem) -> Int {
-            switch status(task) {
-            case .overdue: 0
-            case .today: 1
-            default: isMine(task) ? 2 : 3
-            }
-        }
-        let needingAttention = active.enumerated()
-            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
-            .prefix(HomeSummary.maxItems)
-            .map(\.element)
+        // Today: overdue, then due today (the active list is already by date).
+        let forToday = active.filter { [.overdue, .today].contains(status($0)) }
 
         let list = defaultList(for: space)
         let toBuy = toBuy(in: space)
@@ -108,7 +88,7 @@ extension AppStore {
             showInvite: space == .shared && partner == nil,
             tasks: .init(
                 total: active.count,
-                items: needingAttention.map { task in
+                items: forToday.map { task in
                     .init(
                         id: task.id, title: task.title, dueDay: task.dueDay, status: status(task),
                         assignee: task.assignee, assignedToMe: isMine(task),
@@ -121,10 +101,7 @@ extension AppStore {
                 openCount: toBuy.count,
                 items: toBuy.prefix(HomeSummary.maxItems).map { .init(id: $0.id, name: $0.name, qty: $0.qty) },
                 suggestions: suggestions(in: space).map(\.name)
-            ),
-            notes: notes(in: space).prefix(HomeSummary.maxItems).map {
-                .init(id: $0.id, title: $0.displayTitle, preview: $0.preview, updatedAt: $0.updatedAt, updatedBy: $0.updatedBy)
-            }
+            )
         )
     }
 }

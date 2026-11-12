@@ -1,7 +1,6 @@
 import XCTest
 
-/// Notes: search stays in the space, Move to Shared → Undo, delete → Undo, and writing a note with a checklist
-/// with the keyboard up.
+/// Notes: search stays in the space, Move to Shared → Undo, delete → Undo, and writing a note in one field.
 @MainActor
 final class NotesUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -79,28 +78,21 @@ final class NotesUITests: XCTestCase {
         XCTAssertTrue(row("Wi‑Fi and building info").waitForExistence(timeout: 3))
     }
 
-    func testNewNoteWithChecklistWhileTyping() {
+    /// One field: the first line becomes the title in the list, the rest its preview.
+    func testNewNoteIsOneTextWithTheFirstLineAsTitle() {
         launch("shared")
         let new = app.buttons["New note"]
         XCTAssertTrue(new.waitForExistence(timeout: 5))
         new.tap()
 
-        let title = app.textFields["Title"]
-        XCTAssertTrue(title.waitForExistence(timeout: 3))
-        title.typeText("Packing\n")                 // return moves on to the body
-        app.textFields["Note"].typeText("For the trip")
-        tapHittable("Add checklist item")           // reachable with the keyboard up
-        app.textFields["Checklist item"].firstMatch.typeText("Passport\n")
-        XCTAssertTrue(app.textFields.matching(identifier: "Checklist item").element(boundBy: 1).waitForExistence(timeout: 2),
-                      "return adds the next line")
-        app.typeText("Chargers")
+        let text = app.textFields["Note"]
+        XCTAssertTrue(text.waitForExistence(timeout: 3))
+        text.typeText("Packing\n- Passport\n- Chargers")
+        XCTAssertFalse(app.buttons["Add checklist item"].exists, "no checklist any more")
         tapHittable("Done")
-
-        XCTAssertTrue(app.buttons["Tick Passport"].waitForExistence(timeout: 2))
-        app.buttons["Tick Passport"].tap()
-        XCTAssertTrue(app.buttons["Untick Passport"].waitForExistence(timeout: 2))
 
         app.navigationBars.buttons.firstMatch.tap()  // back to Notes
         XCTAssertTrue(row("Packing").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["- Passport · - Chargers"].exists)
     }
 }
