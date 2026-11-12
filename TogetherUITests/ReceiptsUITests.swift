@@ -96,6 +96,25 @@ final class ReceiptsUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["43,44 zł"].exists)
     }
 
+    /// A trip added twice comes out of History: from inside the trip, or with a swipe on its row.
+    func testDeleteTripsFromHistory() {
+        launch("corner")
+        scrollAndTap("History")
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 3))
+        let trips = app.buttons.matching(NSPredicate(format: "label CONTAINS 'zł'"))
+        XCTAssertTrue(trips.firstMatch.waitForExistence(timeout: 3))
+        let count = trips.count
+
+        trips.firstMatch.tap()
+        scrollAndTap("Delete trip")
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 3))
+        XCTAssertEqual(trips.count, count - 1)
+
+        trips.firstMatch.swipeLeft()
+        tapHittable("Delete")
+        XCTAssertEqual(trips.count, count - 2)
+    }
+
     func testDiscardChangesNothing() {
         launch("corner")
         startScan()

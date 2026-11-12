@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Together API",
-    "version": "0.8.0",
+    "version": "0.10.0",
     "description": "Foundation endpoints: auth, profile, spaces, invites.\n\n* All bodies are JSON. Unknown fields are rejected (`400 invalid_json`).\n* Errors always look like `{\"error\": {\"code\": \"...\", \"message\": \"...\"}}`. Clients branch on\n  `code`; `message` is user-facing English copy.\n* Authenticated endpoints take `Authorization: Bearer <access_token>`. On `401` with\n  `invalid_access_token` call `/v1/auth/refresh` once and retry; on any other `401` sign the user out.\n* A space you can't access answers `404 space_not_found` (never 403): other people's\n  spaces, and especially their Personal space, don't exist as far as you know.\n* Limits: any endpoint may answer `429 rate_limited` with `Retry-After` (600 requests/min per\n  address; stricter on sign-in, sign-up, password reset, invite codes, avatar upload and event\n  streams). Bodies over 21 MB get `413 body_too_large`. Creating beyond a space's caps (500 open\n  grocery items, 20 lists, 1000 open tasks, 5000 notes) answers `409 limit_reached`. A list\n  returns its newest 200 bought items; the notes list returns the newest 500 (search finds older).\n  Receipt scans: 30 per person per day, `POST /receipts/scan` bodies up to 20 MB.\n* Every response is `Cache-Control: no-store` (avatars: `private, max-age=300`). There is no CORS:\n  the API is for the native app.\n"
   },
   "servers": [
@@ -1570,6 +1570,22 @@
             "description": "`space_not_found`, `trip_not_found`"
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "groceries"
+        ],
+        "summary": "Delete a trip",
+        "description": "Removes the trip from History with its lines (a receipt added twice, say), so they no longer count towards\nmonth totals or suggestions. List items are left as they are. Emits `trip.deleted` with `removed_id`.\n",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error",
+            "description": "`space_not_found`, `trip_not_found`"
+          }
+        }
       }
     },
     "/v1/spaces/{spaceID}/receipts/match": {
@@ -1993,7 +2009,7 @@
           "spaces"
         ],
         "summary": "Realtime changes of the space from every module (Server-Sent Events)",
-        "description": "`text/event-stream`. Each event: `event: <type>`, `id`, `data: <GroceryEvent | TaskEvent JSON>`. Grocery types:\nlist.created, list.updated, list.deleted, item.added, item.updated, item.bought, item.unbought,\nitem.removed, trip.created. Task types: task.created, task.updated, task.completed, task.reopened,\ntask.deleted. Note types: note.created, note.updated, note.deleted, note.restored, note.moved_out, note.moved_in.\nSpace: space.member_joined (\"Sam joined your Shared space\"). `actor_id` says who did it (\"Sam bought this\", \"Sam did this\"). A `: ping` comment\ncomes every 25 s. On disconnect, reconnect (the server suggests `retry: 3000`) and refetch the list:\nevents are not replayed.\n",
+        "description": "`text/event-stream`. Each event: `event: <type>`, `id`, `data: <GroceryEvent | TaskEvent JSON>`. Grocery types:\nlist.created, list.updated, list.deleted, item.added, item.updated, item.bought, item.unbought,\nitem.removed, trip.created, trip.deleted. Task types: task.created, task.updated, task.completed, task.reopened,\ntask.deleted. Note types: note.created, note.updated, note.deleted, note.restored, note.moved_out, note.moved_in.\nSpace: space.member_joined (\"Sam joined your Shared space\"). `actor_id` says who did it (\"Sam bought this\", \"Sam did this\"). A `: ping` comment\ncomes every 25 s. On disconnect, reconnect (the server suggests `retry: 3000`) and refetch the list:\nevents are not replayed.\n",
         "responses": {
           "429": {
             "$ref": "#/components/responses/Error",
@@ -3204,6 +3220,355 @@
           }
         }
       }
+    },
+    "/.well-known/apple-app-site-association": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Universal links for the iOS app",
+        "description": "Associates `/invite/*`, `/verify-email*` and `/reset-password*` with the app ids in `APPLE_APP_IDS`\n(`TEAMID.bundle.id`), plus `webcredentials` for password AutoFill. Served as JSON at 200 without a\nredirect, as iOS requires. 404 when `APPLE_APP_IDS` is empty.\n",
+        "security": [
+
+        ],
+        "responses": {
+          "200": {
+            "description": "The association file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/assets/web.css": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Stylesheet of the link pages (built from the design tokens)",
+        "security": [
+
+        ],
+        "responses": {
+          "200": {
+            "description": "CSS",
+            "content": {
+              "text/css": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/verify-email": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Confirm-email page (for people without the app)",
+        "description": "The link in the verification email. Opening it changes nothing (link scanners fetch URLs): the page\nshows a \"Confirm email\" button that POSTs the token. With the app installed, iOS opens the link in\nthe app instead, which calls `POST /v1/auth/email/verify`.\n",
+        "security": [
+
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The page with the button",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No token",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Confirm the email (form post from the page)",
+        "description": "Needs the page's CSRF cookie and field and a same-origin `Origin`. Rate-limited like the JSON endpoint.",
+        "security": [
+
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "csrf"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "csrf": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmed",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF check failed",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Link expired or used",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reset-password": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Choose-a-new-password page (for people without the app)",
+        "description": "The link in the reset email: a form for the new password (twice). Opening it doesn't use the token.\nWith the app installed, iOS opens the link in the app, which calls `POST /v1/auth/password/reset`.\n",
+        "security": [
+
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The form",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No token",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Set the new password (form post from the page)",
+        "description": "Same password rules as the API (8–256 characters); signs out every device. CSRF-protected and rate-limited.",
+        "security": [
+
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "csrf",
+                  "password",
+                  "confirm"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "csrf": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "confirm": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Changed",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF check failed",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Link expired or used",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Passwords differ or too short (the form again",
+            "with the reason)": null,
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invite/{code}": {
+      "get": {
+        "tags": [
+          "web"
+        ],
+        "summary": "Invite page (for people without the app)",
+        "description": "The universal link in an invite (`InviteDTO.link`). Explains how to join and shows the code, with an\nApp Store button when `APP_STORE_URL` is set. It never looks the code up (no way to test codes).\n",
+        "security": [
+
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not a code",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4361,7 +4726,8 @@
               "item.bought",
               "item.unbought",
               "item.removed",
-              "trip.created"
+              "trip.created",
+              "trip.deleted"
             ]
           },
           "space_id": {

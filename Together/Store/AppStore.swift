@@ -1,3 +1,4 @@
+import UIKit
 import Foundation
 import Observation
 
@@ -18,10 +19,17 @@ final class AppStore {
     var me: Person = .alex
     /// My display name (onboarding "What should we call you?", Settings). `me` stays the identity.
     var myName = "Alex"
-    /// My profile picture, picked in Settings (JPEG/PNG data; `PUT /v1/me/avatar`).
+    /// My profile picture, picked in Settings (JPEG/PNG data; `PUT /v1/me/avatar`). Shown at once via `avatarPhotos`.
     var myAvatar: Data? {
-        didSet { if myAvatar != oldValue { record(.avatarChanged(myAvatar)) } }
+        didSet {
+            guard myAvatar != oldValue else { return }
+            avatarPhotos[me.id] = myAvatar.flatMap(UIImage.init(data:))
+            record(.avatarChanged(myAvatar))
+        }
     }
+    /// Profile photos by person, from the server (`avatar.url` on `/v1/me` and the members) or just picked here.
+    /// Someone without one shows their initial.
+    var avatarPhotos: [Person.ID: UIImage] = [:]
     /// Settings → Notifications (`/v1/me/settings` `notifications`).
     var notificationPrefs = NotificationPrefs() {
         didSet {
@@ -255,6 +263,15 @@ final class AppStore {
     }
 
     func recentTrips(in space: SpaceKind, limit: Int = 2) -> [Trip] { Array(trips(in: space).prefix(limit)) }
+
+    /// DELETE …/trips/{id} — out of History with its lines (a receipt added twice); the list stays as it is.
+    @discardableResult
+    func deleteTrip(_ id: Trip.ID) -> Trip? {
+        guard let i = trips.firstIndex(where: { $0.id == id }) else { return nil }
+        let trip = trips.remove(at: i)
+        record(.tripDeleted(trip))
+        return trip
+    }
 
     // MARK: Tasks — /v1/spaces/{id}/tasks, …/complete, …/reopen, …/reminder
 
@@ -532,6 +549,10 @@ final class AppStore {
 
     // Checklist lines — never conflict with text edits, so they don't need or bump the version.
 
+    /// Lines added empty (the editor's "Add item" row): the server requires text, so a line is sent only once it has
+    /// some — its first non-empty edit becomes the POST — and one deleted while still empty is never sent at all.
+    @ObservationIgnored private var unsentChecklistItems: Set<ChecklistItem.ID> = []
+
     /// POST …/notes/{id}/items — at the end, or at `position`.
     @discardableResult
     func addChecklistItem(_ text: String, to id: Note.ID, in space: SpaceKind, at position: Int? = nil) -> ChecklistItem? {
@@ -540,9 +561,15 @@ final class AppStore {
         let at = min(max(position ?? notes[i].checklist.count, 0), notes[i].checklist.count)
         notes[i].checklist.insert(item, at: at)
         touch(i)
-        record(.checklistAdded(item, note: id, at: at, space))
+        if Self.isBlank(item.label) {
+            unsentChecklistItems.insert(item.id)
+        } else {
+            record(.checklistAdded(item, note: id, at: at, space))
+        }
         return item
     }
+
+    private static func isBlank(_ text: String) -> Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     /// PATCH …/items/{itemID} — tick, rename or reorder one line.
     @discardableResult
@@ -564,6 +591,14 @@ final class AppStore {
             notes[i].checklist.insert(item, at: j)
         }
         touch(i)
+        if unsentChecklistItems.contains(itemID) {
+            let item = notes[i].checklist[j]
+            guard !Self.isBlank(item.label) else { return item } // still empty: stays on this phone
+            unsentChecklistItems.remove(itemID)
+            record(.checklistAdded(item, note: noteID, at: j, space))
+            if item.done { record(.checklistEdited(itemID, note: noteID, text: nil, done: true, position: nil, space)) }
+            return item
+        }
         record(.checklistEdited(itemID, note: noteID, text: text, done: done, position: position, space))
         return notes[i].checklist[j]
     }
@@ -575,7 +610,7 @@ final class AppStore {
               let j = notes[i].checklist.firstIndex(where: { $0.id == itemID }) else { return nil }
         let item = notes[i].checklist.remove(at: j)
         touch(i)
-        record(.checklistDeleted(itemID, note: noteID, space))
+        if unsentChecklistItems.remove(itemID) == nil { record(.checklistDeleted(itemID, note: noteID, space)) }
         return item
     }
 

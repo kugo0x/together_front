@@ -97,6 +97,42 @@ struct NoteStoreTests {
 
     // MARK: Checklist
 
+    /// Records what the store would send, as short labels.
+    @MainActor final class Spy: StoreSync {
+        var sent: [String] = []
+        func record(_ change: StoreChange) {
+            switch change {
+            case .checklistAdded(let item, _, let at, _): sent.append("add \(item.label) @\(at)")
+            case .checklistEdited(_, _, let text, let done, _, _): sent.append("edit \(text ?? "-") \(done.map(String.init) ?? "-")")
+            case .checklistDeleted: sent.append("delete")
+            default: break
+            }
+        }
+        func loadLines(of tripID: Trip.ID) async {}
+        func spacesChanged() async {}
+    }
+
+    /// The server requires text: the editor's empty "Add item" row is sent with its first text, and never if it
+    /// is dropped while still empty.
+    @Test func emptyChecklistLineIsSentOnlyOnceItHasText() throws {
+        let store = makeStore()
+        let note = store.createNote(in: .personal, title: "Packing", items: ["Passport"])
+        let spy = Spy()
+        store.sync = spy
+
+        let line = try #require(store.addChecklistItem("", to: note.id, in: .personal))
+        store.updateChecklistItem(line.id, in: note.id, space: .personal, text: " ")
+        #expect(spy.sent.isEmpty)
+        store.updateChecklistItem(line.id, in: note.id, space: .personal, text: "S")
+        store.updateChecklistItem(line.id, in: note.id, space: .personal, text: "Socks")
+        #expect(spy.sent == ["add S @1", "edit Socks -"])
+
+        let dropped = try #require(store.addChecklistItem("", to: note.id, in: .personal, at: 0))
+        store.deleteChecklistItem(dropped.id, in: note.id, space: .personal)
+        #expect(spy.sent.count == 2)
+        #expect(store.note(note.id, in: .personal)?.checklist.map(\.label) == ["Passport", "Socks"])
+    }
+
     @Test func checklistAddToggleRenameReorderDelete() throws {
         let store = makeStore()
         let note = store.createNote(in: .personal, title: "Packing", items: ["Passport", "Chargers"])

@@ -118,6 +118,7 @@ struct RootView: View {
         .environment(\.space, space)
         .environment(\.selectSpace, SelectSpaceAction { [$space] in $space.wrappedValue = $0 })
         .environment(store)
+        .environment(\.avatarPhotos, store.avatarPhotos)
         .environment(router)
         .environment(\.receiptRecognizer, receiptRecognizer)
         .environment(\.receiptTestInput, Self.receiptTestInput)

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Network
 import os
 
@@ -43,6 +44,8 @@ final class RemoteSync: StoreSync {
     private var shownCache = false
     private var loadsInFlight = 0
     private var heard: [(event: SpaceEventDTO, kind: SpaceKind)] = []
+    /// The avatar URL each shown photo came from.
+    private var avatarURLs: [UUID: String] = [:]
 
     init(client: APIClient, store: AppStore, toasts: ToastCenter, me: Person, calendar: Calendar = .current,
          cachesLoads: Bool = true) {
@@ -149,6 +152,34 @@ final class RemoteSync: StoreSync {
         self.directory = directory
         snapshot.relink(localID)
         apply(me: bundle.me, settings: bundle.settings, spaces: bundle.spaces, partner: partner, snapshot: snapshot)
+        var urls: [UUID: String] = [:]
+        for member in bundle.members { urls[member.userId] = member.avatar?.url }
+        urls[bundle.me.id] = bundle.me.avatar?.url
+        loadAvatars(urls, people: Set(directory.people.keys))
+    }
+
+    /// Fetches the profile photos whose URL changed (`?v=` moves with every upload) and drops removed ones.
+    private func loadAvatars(_ urls: [UUID: String], people: Set<UUID>) {
+        for id in people where urls[id] == nil && avatarURLs[id] != nil {
+            avatarURLs[id] = nil
+            store?.avatarPhotos[id] = nil
+        }
+        for (id, url) in urls where avatarURLs[id] != url {
+            avatarURLs[id] = url
+            guard let request = Self.avatarRequest(url) else { continue }
+            Task {
+                guard let (data, _) = try? await client.raw(request), let image = UIImage(data: data),
+                      avatarURLs[id] == url else { return }
+                store?.avatarPhotos[id] = image
+            }
+        }
+    }
+
+    /// `/v1/users/{id}/avatar?v=…` (from the API) as a request against the API's base URL.
+    static func avatarRequest(_ url: String) -> APIRequest? {
+        guard let parts = URLComponents(string: url) else { return nil }
+        let path = parts.path.hasPrefix("/") ? String(parts.path.dropFirst()) : parts.path
+        return .get(path, query: parts.queryItems ?? [])
     }
 
     private nonisolated static func members(of shared: UUID?, client: APIClient) async throws -> [MemberDTO] {
@@ -420,6 +451,11 @@ final class RemoteSync: StoreSync {
                 let local = added.first { $0.name.caseInsensitiveCompare(dto.name) == .orderedSame }
                 adopt(dto, replacing: local?.id ?? dto.id)
             }
+        case .tripDeleted(let trip):
+            let s = try await space(trip.space)
+            do {
+                try await client.send(.delete("v1/spaces/\(s)/trips/\(id(trip.id))"))
+            } catch let error as APIError where error.code == "trip_not_found" {} // the partner deleted it first
         case .receiptConfirmed(let review, let trip, let kind):
             let s = try await space(kind)
             let body = ConfirmReceiptBody(
@@ -621,6 +657,10 @@ final class RemoteSync: StoreSync {
                 store.syncNotification(before)
                 kind = before.space
                 toasts.show("Couldn’t complete “\(before.title)”. \(message)")
+            case .tripDeleted(let trip):
+                store.trips.append(trip)
+                kind = trip.space
+                toasts.show("Couldn’t delete the trip. \(message)")
             case .itemEdited(_, let space), .itemUnbought(_, let space), .itemRemoved(_, let space),
                  .itemRestored(_, let space), .suggestionDismissed(_, let space), .suggestionsAccepted(_, _, let space),
                  .receiptConfirmed(_, _, let space), .checklistAdded(_, _, _, let space),
@@ -842,6 +882,8 @@ final class RemoteSync: StoreSync {
                 trip.id = localID(dto.id)
                 store.trips.removeAll { $0.id == trip.id }
                 store.trips.append(trip)
+            case "trip.deleted":
+                if let removed = event.removedId { store.trips.removeAll { $0.id == localID(removed) } }
             case "task.created", "task.updated", "task.completed", "task.reopened":
                 guard let dto = event.task else { return }
                 var task = APIMapping.task(dto, space: kind, directory)
