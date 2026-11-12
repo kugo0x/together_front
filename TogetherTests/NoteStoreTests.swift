@@ -95,6 +95,23 @@ struct NoteStoreTests {
         #expect((try? store.updateNote(note.id, in: .shared, title: "Trip!", body: "", ifMatch: 1)?.get()) != nil)
     }
 
+    // MARK: One field
+
+    /// The editor writes one text: the first line is the title, the rest the body — and back again.
+    @Test func editorTextSplitsIntoTitleAndBody() {
+        #expect(Note.split("Packing\n- Passport\n- Chargers") == ("Packing", "- Passport\n- Chargers"))
+        #expect(Note.split("Just a title") == ("Just a title", ""))
+        #expect(Note.split("") == ("", ""))
+        #expect(Note.split("\nno title") == ("", "no title"))
+        let long = String(repeating: "x", count: 201)
+        #expect(Note.split(long + "\nrest") == ("", long + "\nrest"), "a first line too long for a title stays body")
+        for text in ["Packing\n- Passport", "Title", "", "A\n\nB"] {
+            let (title, body) = Note.split(text)
+            #expect(Note.join(title: title, body: body) == text)
+        }
+        #expect(Note.join(title: "", body: "Old note without a title") == "Old note without a title")
+    }
+
     // MARK: Checklist
 
     /// Records what the store would send, as short labels.

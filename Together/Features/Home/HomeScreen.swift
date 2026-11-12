@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Home (HANDOFF §6.6): quick actions, an invite banner while Shared has one member, then three short
-/// sections — Upcoming, Groceries (+ suggestions teaser), Recent notes. Lists, not dashboards: no statistics.
+/// Home (HANDOFF §6.6): quick actions, an invite banner while Shared has one member, then two short sections —
+/// Today (every task due today or overdue) and Groceries (+ suggestions teaser). Lists, not dashboards: no
+/// statistics. Recent notes were dropped for Today (decided 2026-11-12).
 /// Everything comes from `store.home(in: space)`, shaped like `GET /v1/spaces/{id}/home`.
 struct HomeScreen: View {
     @Environment(AppStore.self) private var store
@@ -44,9 +45,9 @@ struct HomeScreen: View {
                 }
             }
 
-            ShellSection(title: "Upcoming", count: home.tasks.total, action: "All tasks") { router.tab = .tasks } content: {
+            ShellSection(title: "Today", count: home.tasks.items.count, action: "All tasks") { router.tab = .tasks } content: {
                 if home.tasks.items.isEmpty {
-                    quietRow("Nothing due. Enjoy the quiet.")
+                    quietRow("Nothing for today. Enjoy the quiet.")
                 }
                 ForEach(home.tasks.items) { entry in
                     taskRow(entry, dates: dates)
@@ -64,21 +65,6 @@ struct HomeScreen: View {
                 }
                 if let teaser = home.suggestionTeaser {
                     suggestionsTeaser(teaser)
-                }
-            }
-
-            ShellSection(title: "Recent notes", action: "All notes") { router.tab = .notes } content: {
-                if home.notes.isEmpty {
-                    quietRow(space == .shared ? "No shared notes yet" : "No notes yet")
-                }
-                ForEach(home.notes) { entry in
-                    NoteRow(
-                        title: entry.title,
-                        preview: entry.preview,
-                        updated: dates.past(entry.updatedAt),
-                        by: space == .shared ? entry.updatedBy : nil,
-                        me: store.me
-                    ) { router.open(entry.id) }
                 }
             }
         }

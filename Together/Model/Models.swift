@@ -84,7 +84,8 @@ struct ChecklistItem: Identifiable, Codable, Hashable, Sendable {
     var doneAt: Date?
 }
 
-/// Plain-text body plus a checklist; no formatting in the MVP.
+/// Plain text, written in one field: the first line is the title, the rest the body (decided 2026-11-12 — no
+/// checklist, no formatting). `checklist` only holds lines from before that, until the API drops them.
 struct Note: Identifiable, Codable, Hashable, Sendable {
     var id: UUID = UUID()
     var space: SpaceKind
@@ -116,6 +117,23 @@ struct Note: Identifiable, Codable, Hashable, Sendable {
         if !lines.isEmpty { return lines.joined(separator: " · ") }
         let items = checklist.map(\.label).filter { !$0.isEmpty }
         return items.isEmpty ? nil : items.joined(separator: ", ")
+    }
+
+    /// What the editor shows: the title as the first line, then the body.
+    var text: String { Note.join(title: title, body: body) }
+
+    static func join(title: String, body: String) -> String {
+        title.isEmpty ? body : body.isEmpty ? title : title + "\n" + body
+    }
+
+    /// The editor's text as the API's fields: the first line is the title (when it fits), the rest the body.
+    static func split(_ text: String, titleLimit: Int = AppStore.Limits.noteTitle) -> (title: String, body: String) {
+        guard let newline = text.firstIndex(of: "\n") else {
+            return text.count <= titleLimit ? (text, "") : ("", text)
+        }
+        let first = String(text[..<newline])
+        guard first.count <= titleLimit else { return ("", text) }
+        return (first, String(text[text.index(after: newline)...]))
     }
 
     private var bodyLines: [String] {
