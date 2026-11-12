@@ -19,37 +19,37 @@ struct HomeSummaryTests {
 
     // MARK: Tasks
 
-    @Test func upToThreeTasksNeedingAttention() {
+    @Test func todayShowsTasksDueTodayOnly() {
         let home = makeStore().home(in: .shared)
         #expect(home.tasks.total == 5)
-        #expect(home.tasks.items.map(\.title) == ["Pay the internet bill", "Clean the bathroom", "Return the parcel"])
-        #expect(home.tasks.items.map(\.status) == [.today, .upcoming, .upcoming])
+        #expect(home.tasks.items.map(\.title) == ["Pay the internet bill"])
+        #expect(home.tasks.items.map(\.status) == [.today])
         #expect(home.tasks.items.first?.assignedToMe == true)
         #expect(home.tasks.items.first?.reminderAt != nil)
     }
 
-    @Test func overdueComesFirstThenTodayThenMineThenByDate() throws {
+    @Test func overdueComesFirstAndLaterOrUndatedStayOff() throws {
         let store = makeStore()
         let today = store.today
         _ = try #require(store.createTask(draft("Mine later", due: today.adding(days: 5), assignee: .alex), in: .shared))
         _ = try #require(store.createTask(draft("Overdue", due: today.adding(days: -2)), in: .shared))
+        _ = try #require(store.createTask(draft("Someday", due: nil), in: .shared))
+        _ = try #require(store.createTask(draft("Also today", due: today), in: .shared))
         let home = store.home(in: .shared)
-        #expect(home.tasks.items.map(\.title) == ["Overdue", "Pay the internet bill", "Mine later"])
-        #expect(home.tasks.items.map(\.status) == [.overdue, .today, .upcoming])
+        #expect(home.tasks.items.map(\.title) == ["Overdue", "Pay the internet bill", "Also today"]
+            || home.tasks.items.map(\.title) == ["Overdue", "Also today", "Pay the internet bill"])
+        #expect(home.tasks.items.map(\.status) == [.overdue, .today, .today])
     }
 
-    @Test func undatedTasksAreSomeday() throws {
+    @Test func nothingForTodayIsEmpty() {
         let store = makeStore()
-        for task in store.activeTasks(in: .shared) where task.dueDay != nil { store.deleteTask(task.id, in: .shared) }
-        let home = store.home(in: .shared)
-        #expect(home.tasks.items.map(\.title) == ["Defrost the freezer"])
-        #expect(home.tasks.items.first?.status == .someday)
+        for task in store.activeTasks(in: .shared) where task.dueDay == store.today { store.deleteTask(task.id, in: .shared) }
+        #expect(store.home(in: .shared).tasks.items.isEmpty)
     }
 
     @Test func personalTasksAreAllMine() {
         let home = makeStore().home(in: .personal)
-        #expect(home.tasks.items.allSatisfy { $0.assignedToMe })
-        #expect(home.tasks.items.map(\.title) == ["Call Mum", "Renew gym membership", "Book a dentist appointment"])
+        #expect(home.tasks.items.allSatisfy { $0.assignedToMe && [.overdue, .today].contains($0.status) })
     }
 
     // MARK: Groceries and suggestions
@@ -81,17 +81,6 @@ struct HomeSummaryTests {
         #expect(store.home(in: .shared).suggestionTeaser == "1 thing you usually buy — review")
     }
 
-    // MARK: Notes
-
-    @Test func threeMostRecentNotes() {
-        let store = makeStore()
-        let note = store.createNote(in: .shared, title: "Fresh")
-        let home = store.home(in: .shared)
-        #expect(home.notes.count == 3)
-        #expect(home.notes.first?.id == note.id)
-        #expect(home.notes.map(\.title) == ["Fresh", "Weekend in Gdańsk", "Wi‑Fi and building info"])
-    }
-
     // MARK: Invite banner
 
     @Test func inviteShowsOnlyInSharedWhenAlone() {
@@ -111,16 +100,13 @@ struct HomeSummaryTests {
         // Make the Personal space as tempting as possible: newest, overdue, mine.
         _ = try #require(store.createTask(draft("Secret overdue", due: store.today.adding(days: -1)), in: .personal))
         _ = try #require(store.addItem(text: "Surprise gift", in: .personal))
-        store.createNote(in: .personal, title: "Diary")
 
         let home = store.home(in: .shared)
         let personalTasks = Set(store.tasks(in: .personal).map(\.id))
         let personalItems = Set(store.groceries(in: .personal).map(\.id))
-        let personalNotes = Set(store.notes(in: .personal).map(\.id))
         #expect(home.space.kind == .shared)
         #expect(home.tasks.items.allSatisfy { !personalTasks.contains($0.id) })
         #expect(home.groceries.items.allSatisfy { !personalItems.contains($0.id) })
-        #expect(home.notes.allSatisfy { !personalNotes.contains($0.id) })
         #expect(home.tasks.total == store.activeTasks(in: .shared).count)
         #expect(home.groceries.openCount == store.toBuy(in: .shared).count)
 
@@ -128,7 +114,6 @@ struct HomeSummaryTests {
         let personal = store.home(in: .personal)
         #expect(personal.tasks.items.first?.title == "Secret overdue")
         #expect(personal.groceries.items.first?.name == "Surprise gift")
-        #expect(personal.notes.first?.title == "Diary")
         #expect(personal.groceries.suggestions.isEmpty)
     }
 }

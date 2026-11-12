@@ -60,9 +60,9 @@ final class HomeUITests: XCTestCase {
     func testNoteQuickActionOpensANewNote() {
         launch()
         tapHittable("New note")
-        let title = app.textFields["Title"]
-        XCTAssertTrue(title.waitForExistence(timeout: 3))
-        title.typeText("Paint colours")
+        let text = app.textFields["Note"]
+        XCTAssertTrue(text.waitForExistence(timeout: 3))
+        text.typeText("Paint colours")
         XCTAssertTrue(app.staticTexts["Shared with Sam — you can both edit this note."].exists)
         app.navigationBars.buttons.firstMatch.tap() // back to Notes
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Paint colours")).firstMatch
@@ -76,11 +76,10 @@ final class HomeUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["Tasks"].isSelected)
 
         app.tabBars.buttons["Home"].tap()
-        let note = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Weekend in Gdańsk")).firstMatch
-        reveal(note)
-        note.tap()
-        XCTAssertTrue(app.staticTexts["Shared with Sam — you can both edit this note."].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.tabBars.buttons["Notes"].isSelected)
+        let groceries = app.buttons["Open list"].firstMatch
+        reveal(groceries)
+        groceries.tap()
+        XCTAssertTrue(app.tabBars.buttons["Groceries"].isSelected)
     }
 
     func testSharedHomeShowsNothingPersonal() {
@@ -99,7 +98,7 @@ final class HomeUITests: XCTestCase {
         tapHittable("Not now")
 
         app.buttons["Personal"].firstMatch.tap()
-        XCTAssertTrue(app.staticTexts["Call Mum"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Protein bars"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.staticTexts["Shared works best with two"].exists, "no banner in Personal")
     }
 }
