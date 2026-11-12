@@ -39,6 +39,13 @@ struct HistoryScreen: View {
                         } label: {
                             TripRow(trip: trip, me: store.me)
                         }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) { store.deleteTrip(trip.id) } label: {
+                                Label("Delete", systemImage: IconName.trash.systemName)
+                            }
+                            .tint(TG.Colors.danger)
+                        }
+                        .accessibilityAction(named: "Delete") { store.deleteTrip(trip.id) }
                     }
                 }
             }
@@ -88,6 +95,7 @@ struct TripDetail: View {
     /// The row that was tapped; the live version (with its lines, once loaded) comes from the store.
     let tapped: Trip
     @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
     /// The receipt lines are fetched when the trip is opened (`GET /trips/{id}`); until then the empty state waits.
     @State private var linesLoaded = false
 
@@ -132,6 +140,15 @@ struct TripDetail: View {
                     }
                 }
             }
+
+            Section {
+                TGButton("Delete trip", icon: .trash, variant: .destructive, block: true) {
+                    store.deleteTrip(tapped.id)
+                    dismiss()
+                }
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
