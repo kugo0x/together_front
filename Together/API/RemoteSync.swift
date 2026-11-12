@@ -420,6 +420,11 @@ final class RemoteSync: StoreSync {
                 let local = added.first { $0.name.caseInsensitiveCompare(dto.name) == .orderedSame }
                 adopt(dto, replacing: local?.id ?? dto.id)
             }
+        case .tripDeleted(let trip):
+            let s = try await space(trip.space)
+            do {
+                try await client.send(.delete("v1/spaces/\(s)/trips/\(id(trip.id))"))
+            } catch let error as APIError where error.code == "trip_not_found" {} // the partner deleted it first
         case .receiptConfirmed(let review, let trip, let kind):
             let s = try await space(kind)
             let body = ConfirmReceiptBody(
@@ -621,6 +626,10 @@ final class RemoteSync: StoreSync {
                 store.syncNotification(before)
                 kind = before.space
                 toasts.show("Couldn’t complete “\(before.title)”. \(message)")
+            case .tripDeleted(let trip):
+                store.trips.append(trip)
+                kind = trip.space
+                toasts.show("Couldn’t delete the trip. \(message)")
             case .itemEdited(_, let space), .itemUnbought(_, let space), .itemRemoved(_, let space),
                  .itemRestored(_, let space), .suggestionDismissed(_, let space), .suggestionsAccepted(_, _, let space),
                  .receiptConfirmed(_, _, let space), .checklistAdded(_, _, _, let space),
@@ -842,6 +851,8 @@ final class RemoteSync: StoreSync {
                 trip.id = localID(dto.id)
                 store.trips.removeAll { $0.id == trip.id }
                 store.trips.append(trip)
+            case "trip.deleted":
+                if let removed = event.removedId { store.trips.removeAll { $0.id == localID(removed) } }
             case "task.created", "task.updated", "task.completed", "task.reopened":
                 guard let dto = event.task else { return }
                 var task = APIMapping.task(dto, space: kind, directory)

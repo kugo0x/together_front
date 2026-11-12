@@ -25,6 +25,7 @@ enum StoreChange {
     case suggestionDismissed(String, SpaceKind)
     case suggestionsAccepted([String], added: [GroceryItem], SpaceKind)
     case receiptConfirmed(ReceiptReview, trip: Trip, SpaceKind)
+    case tripDeleted(Trip)
 
     // Tasks
     case taskCreated(TaskItem, AppStore.TaskDraft)

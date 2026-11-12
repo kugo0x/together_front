@@ -256,6 +256,15 @@ final class AppStore {
 
     func recentTrips(in space: SpaceKind, limit: Int = 2) -> [Trip] { Array(trips(in: space).prefix(limit)) }
 
+    /// DELETE …/trips/{id} — out of History with its lines (a receipt added twice); the list stays as it is.
+    @discardableResult
+    func deleteTrip(_ id: Trip.ID) -> Trip? {
+        guard let i = trips.firstIndex(where: { $0.id == id }) else { return nil }
+        let trip = trips.remove(at: i)
+        record(.tripDeleted(trip))
+        return trip
+    }
+
     // MARK: Tasks — /v1/spaces/{id}/tasks, …/complete, …/reopen, …/reminder
 
     /// What the task sheet sends (POST, or a full PATCH). `reminderAt` is the time asked for; quiet hours are
