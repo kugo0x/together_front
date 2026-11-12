@@ -2,12 +2,22 @@ import SwiftUI
 
 /// A round initial for Alex or Sam; `person == nil` draws the dashed "invite partner" ghost.
 /// Fill is the person's token, initials `on-person` in the rounded family.
+/// A person with a profile photo (`avatarPhotos` in the environment) shows it instead of the initial.
 struct Avatar: View {
     let person: Person?
     var size: CGFloat = 32
+    @Environment(\.avatarPhotos) private var photos
 
     var body: some View {
-        if let person {
+        if let person, let photo = photos[person.id] {
+            Image(uiImage: photo)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(person.name)
+        } else if let person {
             Text(person.initial)
                 .font(TG.Font.rounded((size * 0.42).rounded()))
                 .foregroundStyle(TG.Colors.onPerson)
@@ -63,3 +73,15 @@ struct AvatarGallery: View {
 
 #Preview("Avatar · Light") { AvatarGallery().catalogCanvas() }
 #Preview("Avatar · Dark") { AvatarGallery().catalogCanvas().preferredColorScheme(.dark) }
+
+private struct AvatarPhotosKey: EnvironmentKey {
+    static let defaultValue: [Person.ID: UIImage] = [:]
+}
+
+extension EnvironmentValues {
+    /// Profile photos by person (`AppStore.avatarPhotos`), set once at the root.
+    var avatarPhotos: [Person.ID: UIImage] {
+        get { self[AvatarPhotosKey.self] }
+        set { self[AvatarPhotosKey.self] = newValue }
+    }
+}

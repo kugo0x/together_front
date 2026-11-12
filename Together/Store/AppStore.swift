@@ -1,3 +1,4 @@
+import UIKit
 import Foundation
 import Observation
 
@@ -18,10 +19,17 @@ final class AppStore {
     var me: Person = .alex
     /// My display name (onboarding "What should we call you?", Settings). `me` stays the identity.
     var myName = "Alex"
-    /// My profile picture, picked in Settings (JPEG/PNG data; `PUT /v1/me/avatar`).
+    /// My profile picture, picked in Settings (JPEG/PNG data; `PUT /v1/me/avatar`). Shown at once via `avatarPhotos`.
     var myAvatar: Data? {
-        didSet { if myAvatar != oldValue { record(.avatarChanged(myAvatar)) } }
+        didSet {
+            guard myAvatar != oldValue else { return }
+            avatarPhotos[me.id] = myAvatar.flatMap(UIImage.init(data:))
+            record(.avatarChanged(myAvatar))
+        }
     }
+    /// Profile photos by person, from the server (`avatar.url` on `/v1/me` and the members) or just picked here.
+    /// Someone without one shows their initial.
+    var avatarPhotos: [Person.ID: UIImage] = [:]
     /// Settings → Notifications (`/v1/me/settings` `notifications`).
     var notificationPrefs = NotificationPrefs() {
         didSet {
